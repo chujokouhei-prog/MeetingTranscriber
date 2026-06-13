@@ -42,25 +42,32 @@ struct ContentView: View {
     @State private var recordingFiles: [RecordingFile] = []
 
     var body: some View {
-        VStack {
-            Text("打ち合わせ文字起こし")
-                .font(.largeTitle)
-                .fontWeight(.bold)
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("打ち合わせ文字起こし")
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
 
-            Spacer()
+                Text(isRecording ? "録音中" : "録音待機中")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(isRecording ? .red : .secondary)
+            }
 
-            Button(isRecording ? "録音停止" : "録音開始") {
+            Button {
                 if isRecording {
                     stopRecording()
                 } else {
                     startRecording()
                 }
+            } label: {
+                Label(isRecording ? "録音停止" : "録音開始", systemImage: isRecording ? "stop.fill" : "mic.fill")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 22)
             }
-            .font(.title)
-            .fontWeight(.bold)
-            .padding(.horizontal, 48)
-            .padding(.vertical, 24)
-            .background(Color.accentColor)
+            .background(isRecording ? Color.red : Color.accentColor)
             .foregroundStyle(.white)
             .clipShape(RoundedRectangle(cornerRadius: 16))
 
@@ -68,72 +75,92 @@ struct ContentView: View {
                 Text(statusMessage)
                     .font(.body)
                     .foregroundStyle(.secondary)
-                    .padding(.top, 24)
             }
 
-            if recordingFiles.isEmpty {
-                Text("まだ録音はありません")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, statusMessage == nil ? 24 : 8)
+            VStack(alignment: .leading, spacing: 12) {
+                Text("録音一覧")
+                    .font(.title3)
+                    .fontWeight(.bold)
 
-                Spacer()
-            } else {
-                List(recordingFiles) { recordingFile in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(recordingFile.name)
-                                .font(.headline)
+                if recordingFiles.isEmpty {
+                    Text("まだ録音はありません")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 40)
+                } else {
+                    List(recordingFiles) { recordingFile in
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(recordingFile.name)
+                                        .font(.headline)
 
-                            Text(recordingFile.createdAt.formatted(date: .numeric, time: .shortened))
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                                    Text(recordingFile.createdAt.formatted(date: .numeric, time: .shortened))
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
 
-                            if playingRecordingURL == recordingFile.url {
-                                Text("再生中")
-                                    .font(.caption)
-                                    .foregroundStyle(.tint)
+                                Spacer()
+
+                                VStack(spacing: 8) {
+                                    Button(playingRecordingURL == recordingFile.url ? "停止" : "再生") {
+                                        togglePlayback(for: recordingFile)
+                                    }
+                                    .buttonStyle(.bordered)
+
+                                    Button(transcribingRecordingURL == recordingFile.url ? "処理中" : "文字起こし") {
+                                        transcribe(recordingFile)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .disabled(transcribingRecordingURL != nil)
+                                }
                             }
 
-                            if transcribingRecordingURL == recordingFile.url {
-                                Text("文字起こし中")
-                                    .font(.caption)
-                                    .foregroundStyle(.tint)
+                            HStack(spacing: 8) {
+                                if playingRecordingURL == recordingFile.url {
+                                    Text("再生中")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(.blue)
+                                }
+
+                                if transcribingRecordingURL == recordingFile.url {
+                                    Text("文字起こし中")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(.orange)
+                                }
                             }
 
                             if let transcription = transcriptions[recordingFile.name] {
-                                Text(transcription.text)
-                                    .font(.subheadline)
-                                    .padding(.top, 6)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("文字起こし結果")
+                                        .font(.caption)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(.secondary)
 
-                                Text("文字起こし日時: \(transcription.createdAt.formatted(date: .numeric, time: .shortened))")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    Text(transcription.text)
+                                        .font(.body)
+                                        .lineSpacing(4)
+
+                                    Text("文字起こし日時: \(transcription.createdAt.formatted(date: .numeric, time: .shortened))")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.secondary.opacity(0.08))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
                             }
                         }
-
-                        Spacer()
-
-                        VStack(spacing: 8) {
-                            Button(playingRecordingURL == recordingFile.url ? "停止" : "再生") {
-                                togglePlayback(for: recordingFile)
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button(transcribingRecordingURL == recordingFile.url ? "文字起こし中" : "文字起こし") {
-                                transcribe(recordingFile)
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(transcribingRecordingURL != nil)
-                        }
+                        .padding(.vertical, 8)
                     }
-                    .padding(.vertical, 4)
+                    .listStyle(.plain)
                 }
-                .listStyle(.plain)
-                .padding(.top, 16)
             }
         }
-        .padding(32)
+        .padding(24)
         .onAppear {
             loadSavedTranscriptions()
             loadRecordingFiles(clearStatus: true)

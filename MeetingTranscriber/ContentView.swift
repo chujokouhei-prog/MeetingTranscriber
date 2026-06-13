@@ -41,6 +41,9 @@ struct ContentView: View {
     @State private var statusMessage: String?
     @State private var recordingFiles: [RecordingFile] = []
     @State private var isShowingConsentConfirmation = false
+    @State private var isShowingRenameAlert = false
+    @State private var recordingFileToRename: RecordingFile?
+    @State private var newRecordingName = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -115,6 +118,11 @@ struct ContentView: View {
                                     }
                                     .buttonStyle(.bordered)
                                     .disabled(transcribingRecordingURL != nil)
+
+                                    Button("名前変更") {
+                                        showRenameAlert(for: recordingFile)
+                                    }
+                                    .buttonStyle(.bordered)
                                 }
                             }
 
@@ -168,6 +176,20 @@ struct ContentView: View {
         }
         .sheet(isPresented: $isShowingConsentConfirmation) {
             consentConfirmationView
+        }
+        .alert("録音名を変更", isPresented: $isShowingRenameAlert) {
+            TextField("新しい名前", text: $newRecordingName)
+
+            Button("保存") {
+                renameSelectedRecordingFile()
+            }
+
+            Button("キャンセル", role: .cancel) {
+                recordingFileToRename = nil
+                newRecordingName = ""
+            }
+        } message: {
+            Text("拡張子 .m4a は自動で付きます。")
         }
     }
 
@@ -293,6 +315,90 @@ struct ContentView: View {
         var number = 2
 
         while FileManager.default.fileExists(atPath: fileURL.path) {
+            fileURL = documentsFolder.appendingPathComponent("\(baseFileName)_\(number).m4a")
+            number += 1
+        }
+
+        return fileURL
+    }
+
+    private func showRenameAlert(for recordingFile: RecordingFile) {
+        recordingFileToRename = recordingFile
+        newRecordingName = recordingFile.url.deletingPathExtension().lastPathComponent
+        isShowingRenameAlert = true
+    }
+
+    private func renameSelectedRecordingFile() {
+        guard let recordingFile = recordingFileToRename else {
+            return
+        }
+
+        let sanitizedName = sanitizedRecordingName(from: newRecordingName)
+
+        guard !sanitizedName.isEmpty else {
+            statusMessage = "録音名を入力してください。"
+            return
+        }
+
+        stopPlayback()
+        cancelTranscription()
+
+        let newURL = uniqueRecordingURL(
+            baseFileName: sanitizedName,
+            excluding: recordingFile.url
+        )
+        let newFileName = newURL.lastPathComponent
+
+        if newURL == recordingFile.url {
+            recordingFileToRename = nil
+            newRecordingName = ""
+            statusMessage = "録音名は変更されていません"
+            return
+        }
+
+        do {
+            try FileManager.default.moveItem(at: recordingFile.url, to: newURL)
+
+            if let transcription = transcriptions[recordingFile.name] {
+                transcriptions[recordingFile.name] = nil
+                transcriptions[newFileName] = transcription
+                saveTranscriptions()
+            }
+
+            recordingFileToRename = nil
+            newRecordingName = ""
+            statusMessage = "録音名を変更しました"
+            loadRecordingFiles()
+        } catch {
+            debugPrint("Failed to rename recording file: \(error.localizedDescription)")
+            statusMessage = "録音名を変更できませんでした。もう一度お試しください。"
+        }
+    }
+
+    private func sanitizedRecordingName(from name: String) -> String {
+        var sanitizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if sanitizedName.lowercased().hasSuffix(".m4a") {
+            sanitizedName.removeLast(4)
+            sanitizedName = sanitizedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let unsafeCharacters = CharacterSet(charactersIn: "/\\:*?\"<>|")
+            .union(.newlines)
+            .union(.controlCharacters)
+
+        return sanitizedName
+            .components(separatedBy: unsafeCharacters)
+            .filter { !$0.isEmpty }
+            .joined(separator: "_")
+    }
+
+    private func uniqueRecordingURL(baseFileName: String, excluding excludedURL: URL) -> URL {
+        let documentsFolder = documentsFolderURL()
+        var fileURL = documentsFolder.appendingPathComponent("\(baseFileName).m4a")
+        var number = 2
+
+        while FileManager.default.fileExists(atPath: fileURL.path) && fileURL != excludedURL {
             fileURL = documentsFolder.appendingPathComponent("\(baseFileName)_\(number).m4a")
             number += 1
         }

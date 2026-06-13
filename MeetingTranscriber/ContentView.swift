@@ -16,6 +16,11 @@ struct RecordingFile: Identifiable {
     let url: URL
 }
 
+struct SavedTranscription: Codable {
+    let text: String
+    let createdAt: Date
+}
+
 final class AudioPlayerDelegate: NSObject, AVAudioPlayerDelegate {
     var didFinishPlaying: (() -> Void)?
 
@@ -32,7 +37,7 @@ struct ContentView: View {
     @State private var playingRecordingURL: URL?
     @State private var speechRecognitionTask: SFSpeechRecognitionTask?
     @State private var transcribingRecordingURL: URL?
-    @State private var transcriptions: [URL: String] = [:]
+    @State private var transcriptions: [String: SavedTranscription] = [:]
     @State private var statusMessage: String?
     @State private var recordingFiles: [RecordingFile] = []
 
@@ -96,10 +101,14 @@ struct ContentView: View {
                                     .foregroundStyle(.tint)
                             }
 
-                            if let transcription = transcriptions[recordingFile.url] {
-                                Text(transcription)
+                            if let transcription = transcriptions[recordingFile.name] {
+                                Text(transcription.text)
                                     .font(.subheadline)
                                     .padding(.top, 6)
+
+                                Text("文字起こし日時: \(transcription.createdAt.formatted(date: .numeric, time: .shortened))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                         }
 
@@ -126,6 +135,7 @@ struct ContentView: View {
         }
         .padding(32)
         .onAppear {
+            loadSavedTranscriptions()
             loadRecordingFiles(clearStatus: true)
         }
     }
@@ -218,6 +228,7 @@ struct ContentView: View {
             if clearStatus {
                 statusMessage = nil
             }
+
         } catch {
             statusMessage = "録音ファイルを読み込めませんでした"
         }
@@ -264,7 +275,6 @@ struct ContentView: View {
         cancelTranscription()
 
         transcribingRecordingURL = recordingFile.url
-        transcriptions[recordingFile.url] = nil
         statusMessage = nil
 
         SFSpeechRecognizer.requestAuthorization { status in
@@ -308,9 +318,13 @@ struct ContentView: View {
         speechRecognitionTask = speechRecognizer.recognitionTask(with: request) { result, error in
             DispatchQueue.main.async {
                 if let result {
-                    transcriptions[recordingFile.url] = result.bestTranscription.formattedString
+                    transcriptions[recordingFile.name] = SavedTranscription(
+                        text: result.bestTranscription.formattedString,
+                        createdAt: Date()
+                    )
 
                     if result.isFinal {
+                        saveTranscriptions()
                         speechRecognitionTask = nil
                         transcribingRecordingURL = nil
                     }
@@ -320,7 +334,7 @@ struct ContentView: View {
                     speechRecognitionTask = nil
                     transcribingRecordingURL = nil
 
-                    if transcriptions[recordingFile.url] == nil {
+                    if transcriptions[recordingFile.name] == nil {
                         statusMessage = "文字起こしに失敗しました"
                     }
                 }
@@ -332,6 +346,27 @@ struct ContentView: View {
         speechRecognitionTask?.cancel()
         speechRecognitionTask = nil
         transcribingRecordingURL = nil
+    }
+
+    private func loadSavedTranscriptions() {
+        guard let data = UserDefaults.standard.data(forKey: "savedTranscriptions") else {
+            return
+        }
+
+        do {
+            transcriptions = try JSONDecoder().decode([String: SavedTranscription].self, from: data)
+        } catch {
+            statusMessage = "保存済みの文字起こし結果を読み込めませんでした"
+        }
+    }
+
+    private func saveTranscriptions() {
+        do {
+            let data = try JSONEncoder().encode(transcriptions)
+            UserDefaults.standard.set(data, forKey: "savedTranscriptions")
+        } catch {
+            statusMessage = "文字起こし結果を保存できませんでした"
+        }
     }
 
     private func deleteOldRecordingFiles() {

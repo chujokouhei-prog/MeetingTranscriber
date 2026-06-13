@@ -23,6 +23,8 @@ struct ContentView: View {
     @State private var isShowingDeleteConfirmation = false
     @State private var recordingFileToDelete: RecordingFile?
     @State private var transcriptionScrollTargetID: String?
+    @State private var copyFeedback: CopyFeedback?
+    @State private var copyFeedbackResetWorkItem: DispatchWorkItem?
 
     var body: some View {
         NavigationStack {
@@ -321,12 +323,13 @@ struct ContentView: View {
                 Button {
                     copyTranscriptionText(transcription.text)
                 } label: {
-                    Label("コピー", systemImage: "doc.on.doc")
+                    Label(copyFeedback?.message ?? "コピー", systemImage: copyFeedback?.systemImage ?? "doc.on.doc")
                         .labelStyle(.titleAndIcon)
                 }
                 .font(.caption)
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .tint(copyFeedback?.color)
                 .disabled(transcription.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
@@ -525,12 +528,30 @@ struct ContentView: View {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedText.isEmpty else {
-            statusMessage = "コピーできる文字起こし結果がありません。"
+            showCopyFeedback(.failure)
             return
         }
 
         UIPasteboard.general.string = trimmedText
-        statusMessage = "コピーしました"
+
+        if UIPasteboard.general.string == trimmedText {
+            showCopyFeedback(.success)
+        } else {
+            showCopyFeedback(.failure)
+        }
+    }
+
+    private func showCopyFeedback(_ feedback: CopyFeedback) {
+        copyFeedbackResetWorkItem?.cancel()
+        copyFeedback = feedback
+
+        let resetWorkItem = DispatchWorkItem {
+            copyFeedback = nil
+            copyFeedbackResetWorkItem = nil
+        }
+
+        copyFeedbackResetWorkItem = resetWorkItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: resetWorkItem)
     }
 
     private func message(for error: SpeechTranscriberError) -> String {
@@ -549,6 +570,38 @@ struct ContentView: View {
             return "現在、音声認識を使用できません。端末の状態を確認して、時間をおいて再試行してください。"
         case .recognitionFailed:
             return "文字起こしに失敗しました。録音の音量や周囲の雑音を確認して、もう一度お試しください。"
+        }
+    }
+}
+
+private enum CopyFeedback {
+    case success
+    case failure
+
+    var message: String {
+        switch self {
+        case .success:
+            return "コピーしました"
+        case .failure:
+            return "コピーできませんでした"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .success:
+            return "checkmark"
+        case .failure:
+            return "exclamationmark.triangle"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .success:
+            return .green
+        case .failure:
+            return .red
         }
     }
 }

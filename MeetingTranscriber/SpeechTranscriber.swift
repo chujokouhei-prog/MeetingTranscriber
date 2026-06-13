@@ -23,6 +23,7 @@ final class SpeechTranscriber: ObservableObject {
 
     private var speechRecognitionTask: SFSpeechRecognitionTask?
     private var audioExportSession: AVAssetExportSession?
+    private var modernRecognitionTask: Task<Void, Never>?
     private var temporarySegmentURLs: [URL] = []
     private var collectedSegmentTexts: [String] = []
     private var didFinishCurrentTranscription = false
@@ -65,6 +66,15 @@ final class SpeechTranscriber: ObservableObject {
 
                 switch status {
                 case .authorized:
+                    if #available(iOS 26.0, *) {
+                        self.startModernDictationRecognition(
+                            for: recordingFile,
+                            onResult: onResult,
+                            onCompletion: onCompletion
+                        )
+                        return
+                    }
+
                     self.prepareRecognitionSegments(for: recordingFile.url) { result in
                         switch result {
                         case .success(let segmentURLs):
@@ -92,6 +102,8 @@ final class SpeechTranscriber: ObservableObject {
     }
 
     func cancelTranscription() {
+        modernRecognitionTask?.cancel()
+        modernRecognitionTask = nil
         audioExportSession?.cancelExport()
         audioExportSession = nil
         speechRecognitionTask?.cancel()
@@ -99,6 +111,140 @@ final class SpeechTranscriber: ObservableObject {
         transcribingRecordingURL = nil
         didFinishCurrentTranscription = true
         deleteTemporarySegments()
+    }
+
+    @available(iOS 26.0, *)
+    private func startModernDictationRecognition(
+        for recordingFile: RecordingFile,
+        onResult: @escaping (String, Bool) -> Void,
+        onCompletion: @escaping (SpeechTranscriberError?) -> Void
+    ) {
+        modernRecognitionTask?.cancel()
+        modernRecognitionTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            do {
+                let transcriptionText = try await self.modernDictationTranscription(for: recordingFile) { text, isFinal in
+                    DispatchQueue.main.async {
+                        onResult(text, isFinal)
+                    }
+                }
+
+                await MainActor.run {
+                    self.didReceiveNonEmptyTranscription = !transcriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    self.finish(
+                        with: self.didReceiveNonEmptyTranscription ? nil : .noRecognizableSpeech,
+                        onCompletion: onCompletion
+                    )
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    self.finish(with: .recognitionFailed("文字起こしがキャンセルされました。"), onCompletion: onCompletion)
+                }
+            } catch {
+                debugPrint("Modern dictation recognition failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    guard !self.didFinishCurrentTranscription else {
+                        return
+                    }
+
+                    self.prepareRecognitionSegments(for: recordingFile.url) { result in
+                        switch result {
+                        case .success(let segmentURLs):
+                            self.startSpeechRecognition(
+                                for: recordingFile,
+                                segmentURLs: segmentURLs,
+                                onResult: onResult,
+                                onCompletion: onCompletion
+                            )
+                        case .failure(let fallbackError):
+                            self.finish(with: fallbackError, onCompletion: onCompletion)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private func modernDictationTranscription(
+        for recordingFile: RecordingFile,
+        onResult: @escaping (String, Bool) -> Void
+    ) async throws -> String {
+        let transcriber = Speech.DictationTranscriber(
+            locale: recognitionLocale,
+            contentHints: [.farField],
+            transcriptionOptions: [.punctuation, .etiquetteReplacements],
+            reportingOptions: [.alternativeTranscriptions, .frequentFinalization],
+            attributeOptions: [.audioTimeRange, .transcriptionConfidence]
+        )
+        let modules: [any SpeechModule] = [transcriber]
+        let assetStatus = await Speech.AssetInventory.status(forModules: modules)
+
+        if assetStatus == .unsupported {
+            throw SpeechTranscriberError.recognitionFailed("この端末では新しい音声認識モデルを使用できません。")
+        }
+
+        if assetStatus < .installed,
+           let installationRequest = try await Speech.AssetInventory.assetInstallationRequest(supporting: modules) {
+            try await installationRequest.downloadAndInstall()
+        }
+
+        let analysisContext = Speech.AnalysisContext()
+        analysisContext.contextualStrings[.general] = meetingContextualStrings
+
+        let audioFile = try AVAudioFile(forReading: recordingFile.url)
+        let analyzer = try await Speech.SpeechAnalyzer(
+            inputAudioFile: audioFile,
+            modules: modules,
+            options: Speech.SpeechAnalyzer.Options(priority: .userInitiated, modelRetention: .whileInUse),
+            analysisContext: analysisContext,
+            finishAfterFile: true
+        )
+
+        var finalizedTexts: [TimeInterval: String] = [:]
+
+        for try await result in transcriber.results {
+            try Task.checkCancellation()
+
+            let text = String(result.text.characters)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !text.isEmpty else {
+                continue
+            }
+
+            if result.isFinal {
+                finalizedTexts[result.range.start.seconds] = text
+            }
+
+            let combinedText = combinedModernTranscription(
+                finalizedTexts: finalizedTexts,
+                currentText: result.isFinal ? nil : text
+            )
+            onResult(combinedText, result.isFinal)
+        }
+
+        _ = analyzer
+        return combinedModernTranscription(finalizedTexts: finalizedTexts, currentText: nil)
+    }
+
+    private func combinedModernTranscription(
+        finalizedTexts: [TimeInterval: String],
+        currentText: String?
+    ) -> String {
+        var textParts = finalizedTexts
+            .sorted { $0.key < $1.key }
+            .map(\.value)
+
+        if let currentText,
+           !currentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            textParts.append(currentText)
+        }
+
+        return textParts.joined(separator: "\n")
     }
 
     private func prepareRecognitionSegments(

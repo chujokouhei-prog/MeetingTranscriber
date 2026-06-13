@@ -8,10 +8,17 @@
 import SwiftUI
 import AVFoundation
 
+struct RecordingFile: Identifiable {
+    let id = UUID()
+    let name: String
+    let createdAt: Date
+}
+
 struct ContentView: View {
     @State private var isRecording = false
     @State private var audioRecorder: AVAudioRecorder?
-    @State private var message = "まだ録音はありません"
+    @State private var statusMessage: String?
+    @State private var recordingFiles: [RecordingFile] = []
 
     var body: some View {
         VStack {
@@ -36,14 +43,40 @@ struct ContentView: View {
             .foregroundStyle(.white)
             .clipShape(RoundedRectangle(cornerRadius: 16))
 
-            Text(message)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .padding(.top, 24)
+            if let statusMessage {
+                Text(statusMessage)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 24)
+            }
 
-            Spacer()
+            if recordingFiles.isEmpty {
+                Text("まだ録音はありません")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, statusMessage == nil ? 24 : 8)
+
+                Spacer()
+            } else {
+                List(recordingFiles) { recordingFile in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(recordingFile.name)
+                            .font(.headline)
+
+                        Text(recordingFile.createdAt.formatted(date: .numeric, time: .shortened))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listStyle(.plain)
+                .padding(.top, 16)
+            }
         }
         .padding(32)
+        .onAppear {
+            loadRecordingFiles(clearStatus: true)
+        }
     }
 
     private func startRecording() {
@@ -52,7 +85,7 @@ struct ContentView: View {
                 if granted {
                     beginRecording()
                 } else {
-                    message = "マイクの使用が許可されていません"
+                    statusMessage = "マイクの使用が許可されていません"
                 }
             }
         }
@@ -75,9 +108,9 @@ struct ContentView: View {
             recorder.record()
             audioRecorder = recorder
             isRecording = true
-            message = "録音中です"
+            statusMessage = "録音中です"
         } catch {
-            message = "録音を開始できませんでした"
+            statusMessage = "録音を開始できませんでした"
         }
     }
 
@@ -85,12 +118,13 @@ struct ContentView: View {
         audioRecorder?.stop()
         audioRecorder = nil
         isRecording = false
-        message = "録音を保存しました"
+        statusMessage = "録音を保存しました"
+        loadRecordingFiles()
 
         do {
             try AVAudioSession.sharedInstance().setActive(false)
         } catch {
-            message = "録音は停止しましたが、音声設定の終了に失敗しました"
+            statusMessage = "録音は停止しましたが、音声設定の終了に失敗しました"
         }
     }
 
@@ -102,6 +136,43 @@ struct ContentView: View {
 
         let fileName = "recording-\(Int(Date().timeIntervalSince1970)).m4a"
         return documentsFolder.appendingPathComponent(fileName)
+    }
+
+    private func loadRecordingFiles(clearStatus: Bool = false) {
+        do {
+            let documentsFolder = FileManager.default.urls(
+                for: .documentDirectory,
+                in: .userDomainMask
+            )[0]
+
+            let fileURLs = try FileManager.default.contentsOfDirectory(
+                at: documentsFolder,
+                includingPropertiesForKeys: [.creationDateKey],
+                options: [.skipsHiddenFiles]
+            )
+
+            recordingFiles = fileURLs
+                .filter { $0.pathExtension.lowercased() == "m4a" }
+                .compactMap { fileURL in
+                    let values = try? fileURL.resourceValues(forKeys: [.creationDateKey])
+
+                    guard let createdAt = values?.creationDate else {
+                        return nil
+                    }
+
+                    return RecordingFile(
+                        name: fileURL.lastPathComponent,
+                        createdAt: createdAt
+                    )
+                }
+                .sorted { $0.createdAt > $1.createdAt }
+
+            if clearStatus {
+                statusMessage = nil
+            }
+        } catch {
+            statusMessage = "録音ファイルを読み込めませんでした"
+        }
     }
 }
 

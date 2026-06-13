@@ -167,8 +167,6 @@ final class RecordingFileStore: ObservableObject {
         )
 
         let now = Date()
-        let oneDay: TimeInterval = 24 * 60 * 60
-
         for fileURL in fileURLs where fileURL.pathExtension.lowercased() == "m4a" {
             let values = try fileURL.resourceValues(forKeys: [.creationDateKey])
 
@@ -176,7 +174,7 @@ final class RecordingFileStore: ObservableObject {
                 continue
             }
 
-            if now.timeIntervalSince(createdAt) >= oneDay {
+            if now.timeIntervalSince(createdAt) >= DataRetention.duration {
                 try FileManager.default.removeItem(at: fileURL)
                 debugPrint("Deleted old recording file: \(fileURL.lastPathComponent)")
             }

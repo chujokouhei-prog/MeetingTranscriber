@@ -94,13 +94,12 @@ final class TranscriptionStore: ObservableObject {
 
     func deleteOldTranscriptionResults(recordingFiles: [RecordingFile]) {
         let now = Date()
-        let oneDay: TimeInterval = 24 * 60 * 60
         let validRecordingIDs = Set(recordingFiles.map(\.id))
         var updatedTranscriptions = transcriptions
 
         for (recordingID, transcription) in transcriptions {
             let isRecordingFileDeleted = !validRecordingIDs.contains(recordingID)
-            let isOlderThanOneDay = now.timeIntervalSince(transcription.createdAt) >= oneDay
+            let isOlderThanOneDay = now.timeIntervalSince(transcription.createdAt) >= DataRetention.duration
 
             if isRecordingFileDeleted || isOlderThanOneDay {
                 updatedTranscriptions[recordingID] = nil

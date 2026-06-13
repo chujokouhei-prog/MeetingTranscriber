@@ -156,6 +156,10 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            Text(deletionCountdownText(for: recordingFile))
+                .font(.caption)
+                .foregroundStyle(.orange)
+
             HStack(spacing: 8) {
                 if audioPlayer.playingRecordingURL == recordingFile.url {
                     statusBadge("再生中", color: .blue)
@@ -193,6 +197,10 @@ struct ContentView: View {
                             Text("作成日時: \(recordingFile.createdAt.formatted(date: .numeric, time: .shortened))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+
+                            Label(deletionCountdownText(for: recordingFile), systemImage: "clock")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
                         }
                     }
 
@@ -463,6 +471,15 @@ struct ContentView: View {
         let seconds = totalSeconds % 60
 
         return "\(minutes):\(String(format: "%02d", seconds))"
+    }
+
+    private func deletionCountdownText(for recordingFile: RecordingFile, now: Date = Date()) -> String {
+        let remainingSeconds = max(0, recordingFile.deletionDate.timeIntervalSince(now))
+        let totalMinutes = Int(ceil(remainingSeconds / 60))
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+
+        return "あと\(hours)時間\(minutes)分で消去されます"
     }
 
     private func statusBadge(_ text: String, color: Color) -> some View {

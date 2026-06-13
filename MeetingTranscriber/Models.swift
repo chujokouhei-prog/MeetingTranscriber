@@ -7,11 +7,19 @@
 
 import Foundation
 
+enum DataRetention {
+    static let duration: TimeInterval = 24 * 60 * 60
+}
+
 struct RecordingFile: Identifiable, Equatable {
     let id: String
     let name: String
     let createdAt: Date
     let url: URL
+
+    var deletionDate: Date {
+        createdAt.addingTimeInterval(DataRetention.duration)
+    }
 
     var title: String {
         let fileName = url.deletingPathExtension().lastPathComponent

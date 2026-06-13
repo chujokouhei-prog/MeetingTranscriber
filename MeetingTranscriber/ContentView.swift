@@ -262,7 +262,11 @@ struct ContentView: View {
         let audioSession = AVAudioSession.sharedInstance()
 
         do {
-            try audioSession.setCategory(.playAndRecord, mode: .default)
+            try audioSession.setCategory(
+                .playAndRecord,
+                mode: .default,
+                options: [.defaultToSpeaker]
+            )
             try audioSession.setActive(true)
 
             let recorder = try AVAudioRecorder(url: newRecordingURL(), settings: [
@@ -467,6 +471,7 @@ struct ContentView: View {
     private func startPlayback(for recordingFile: RecordingFile) {
         do {
             stopPlayback()
+            try configureAudioSessionForPlayback()
 
             let player = try AVAudioPlayer(contentsOf: recordingFile.url)
             audioPlayerDelegate.didFinishPlaying = {
@@ -489,6 +494,18 @@ struct ContentView: View {
             debugPrint("Failed to play audio: \(error.localizedDescription)")
             statusMessage = "音声を再生できませんでした。録音ファイルが見つからないか、読み込めない可能性があります。"
         }
+    }
+
+    private func configureAudioSessionForPlayback() throws {
+        let audioSession = AVAudioSession.sharedInstance()
+
+        try audioSession.setCategory(
+            .playback,
+            mode: .default,
+            options: [.defaultToSpeaker]
+        )
+        try audioSession.overrideOutputAudioPort(.speaker)
+        try audioSession.setActive(true)
     }
 
     private func stopPlayback() {

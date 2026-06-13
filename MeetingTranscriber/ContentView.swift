@@ -9,6 +9,8 @@ import SwiftUI
 import UIKit
 
 struct ContentView: View {
+    @Environment(\.dismiss) private var dismiss
+
     @StateObject private var recordingFileStore = RecordingFileStore()
     @StateObject private var audioRecorder = AudioRecorderManager()
     @StateObject private var audioPlayer = AudioPlayerManager()
@@ -22,6 +24,7 @@ struct ContentView: View {
     @State private var newRecordingName = ""
     @State private var isShowingDeleteConfirmation = false
     @State private var recordingFileToDelete: RecordingFile?
+    @State private var shouldDismissAfterDeletingRecording = false
     @State private var transcriptionScrollTargetID: String?
     @State private var transcriptionErrorMessages: [String: String] = [:]
     @State private var playbackSeekTime: TimeInterval?
@@ -140,6 +143,7 @@ struct ContentView: View {
 
                 Button("キャンセル", role: .cancel) {
                     recordingFileToDelete = nil
+                    shouldDismissAfterDeletingRecording = false
                 }
             } message: {
                 Text("録音ファイルと文字起こし結果が削除されます。この操作は取り消せません。")
@@ -261,6 +265,26 @@ struct ContentView: View {
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("録音詳細")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            showRenameAlert(for: recordingFile)
+                        } label: {
+                            Label("名称変更", systemImage: "pencil")
+                        }
+
+                        Button(role: .destructive) {
+                            showDeleteConfirmation(for: recordingFile, dismissAfterDeleting: true)
+                        } label: {
+                            Label("削除", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("録音オプション")
+                }
+            }
             .onAppear {
                 audioPlayer.loadPlaybackInfo(for: recordingFile)
             }
@@ -666,8 +690,9 @@ struct ContentView: View {
         isShowingRenameAlert = true
     }
 
-    private func showDeleteConfirmation(for recordingFile: RecordingFile) {
+    private func showDeleteConfirmation(for recordingFile: RecordingFile, dismissAfterDeleting: Bool = false) {
         recordingFileToDelete = recordingFile
+        shouldDismissAfterDeletingRecording = dismissAfterDeleting
         isShowingDeleteConfirmation = true
     }
 
@@ -709,6 +734,11 @@ struct ContentView: View {
             recordingFileToDelete = nil
             statusMessage = "録音を削除しました"
             loadRecordingFiles()
+
+            if shouldDismissAfterDeletingRecording {
+                shouldDismissAfterDeletingRecording = false
+                dismiss()
+            }
         } catch {
             debugPrint("Failed to delete recording file: \(error.localizedDescription)")
             statusMessage = "録音を削除できませんでした。もう一度お試しください。"

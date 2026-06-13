@@ -309,6 +309,9 @@ final class SpeechTranscriber: ObservableObject {
         request.taskHint = .dictation
         request.contextualStrings = meetingContextualStrings
         request.interactionIdentifier = recordingFile.id
+        if #available(iOS 13, *) {
+            request.requiresOnDeviceRecognition = false
+        }
         if #available(iOS 16, *) {
             request.addsPunctuation = true
         }

@@ -62,10 +62,11 @@ final class AudioRecorderManager: ObservableObject {
         try audioSession.setPreferredSampleRate(48_000)
         try audioSession.setCategory(
             .record,
-            mode: .measurement,
+            mode: .videoRecording,
             options: []
         )
         try audioSession.setActive(true)
+        preferBuiltInMicrophoneIfAvailable(audioSession)
 
         let recorder = try AVAudioRecorder(url: fileURL, settings: [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
@@ -88,6 +89,18 @@ final class AudioRecorderManager: ObservableObject {
         isRecording = true
         startAudioLevelMetering()
         debugPrint("Started recording: \(fileURL.lastPathComponent)")
+    }
+
+    private func preferBuiltInMicrophoneIfAvailable(_ audioSession: AVAudioSession) {
+        guard let builtInMicrophone = audioSession.availableInputs?.first(where: { $0.portType == .builtInMic }) else {
+            return
+        }
+
+        do {
+            try audioSession.setPreferredInput(builtInMicrophone)
+        } catch {
+            debugPrint("Failed to prefer built-in microphone: \(error.localizedDescription)")
+        }
     }
 
     private func startAudioLevelMetering() {

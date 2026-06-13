@@ -568,6 +568,8 @@ struct ContentView: View {
                 Label("録音した音声は文字起こしに使用します", systemImage: "text.bubble.fill")
                 Label("録音データと文字起こし結果はこの端末に保存されます", systemImage: "lock.fill")
                 Label("保存されたデータは一定時間後に削除されます", systemImage: "clock.fill")
+                Label("画面を閉じても録音は継続します", systemImage: "iphone")
+                Label("アプリを完全終了すると録音は停止します", systemImage: "exclamationmark.triangle.fill")
             }
             .font(.body)
 
@@ -622,7 +624,7 @@ struct ContentView: View {
         audioRecorder.startRecording(to: recordingFileStore.newRecordingURL()) { result in
             switch result {
             case .success:
-                statusMessage = "録音中です"
+                statusMessage = "録音中です。画面を閉じたり端末がスリープしても録音を継続します。アプリを完全終了すると停止します。"
             case .failure(.microphonePermissionDenied):
                 statusMessage = "マイクの使用が許可されていません。設定アプリでマイクの使用を許可してください。"
             case .failure:

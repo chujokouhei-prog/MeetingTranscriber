@@ -12,6 +12,7 @@ final class AudioRecorderManager: ObservableObject {
     @Published private(set) var isRecording = false
 
     private var audioRecorder: AVAudioRecorder?
+    private var activeRecordingURL: URL?
 
     func startRecording(to fileURL: URL, completion: @escaping (Result<Void, AudioRecorderError>) -> Void) {
         AVAudioApplication.requestRecordPermission { [weak self] granted in
@@ -39,6 +40,7 @@ final class AudioRecorderManager: ObservableObject {
     func stopRecording() -> Result<Void, AudioRecorderError> {
         audioRecorder?.stop()
         audioRecorder = nil
+        activeRecordingURL = nil
         isRecording = false
 
         do {
@@ -56,7 +58,7 @@ final class AudioRecorderManager: ObservableObject {
         try audioSession.setCategory(
             .playAndRecord,
             mode: .default,
-            options: [.defaultToSpeaker]
+            options: [.allowBluetoothHFP, .defaultToSpeaker]
         )
         try audioSession.setActive(true)
 
@@ -69,12 +71,15 @@ final class AudioRecorderManager: ObservableObject {
 
         guard recorder.record() else {
             audioRecorder = nil
+            activeRecordingURL = nil
             isRecording = false
             throw AudioRecorderError.startFailed
         }
 
         audioRecorder = recorder
+        activeRecordingURL = fileURL
         isRecording = true
+        debugPrint("Started recording: \(fileURL.lastPathComponent)")
     }
 }
 

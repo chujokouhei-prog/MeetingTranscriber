@@ -8,6 +8,8 @@
 import SwiftUI
 
 struct ContentView: View {
+    @State private var isRecording = false
+
     var body: some View {
         VStack {
             Text("打ち合わせ文字起こし")
@@ -16,8 +18,8 @@ struct ContentView: View {
 
             Spacer()
 
-            Button("録音開始") {
-                // 録音処理はまだ実装しません
+            Button(isRecording ? "録音停止" : "録音開始") {
+                isRecording.toggle()
             }
             .font(.title)
             .fontWeight(.bold)

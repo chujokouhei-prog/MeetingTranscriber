@@ -46,162 +46,183 @@ struct ContentView: View {
     @State private var newRecordingName = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("打ち合わせ文字起こし")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
+        NavigationStack {
+            List {
+                Section {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Label(isRecording ? "録音中" : "録音待機中", systemImage: isRecording ? "record.circle.fill" : "mic.circle")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(isRecording ? .red : .secondary)
 
-                Text(isRecording ? "録音中" : "録音待機中")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(isRecording ? .red : .secondary)
-            }
-
-            Button {
-                if isRecording {
-                    stopRecording()
-                } else {
-                    isShowingConsentConfirmation = true
-                }
-            } label: {
-                Label(isRecording ? "録音停止" : "録音開始", systemImage: isRecording ? "stop.fill" : "mic.fill")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 22)
-            }
-            .background(isRecording ? Color.red : Color.accentColor)
-            .foregroundStyle(.white)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-
-            if let statusMessage {
-                Text(statusMessage)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("録音一覧")
-                    .font(.title3)
-                    .fontWeight(.bold)
-
-                if recordingFiles.isEmpty {
-                    Text("まだ録音はありません")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 40)
-                } else {
-                    List(recordingFiles) { recordingFile in
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(recordingTitle(for: recordingFile))
-                                        .font(.headline)
-
-                                    Text(recordingFile.name)
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Spacer()
-
-                                VStack(spacing: 8) {
-                                    Button(playingRecordingURL == recordingFile.url ? "停止" : "再生") {
-                                        togglePlayback(for: recordingFile)
-                                    }
-                                    .buttonStyle(.bordered)
-
-                                    Button(transcribingRecordingURL == recordingFile.url ? "処理中" : "文字起こし") {
-                                        transcribe(recordingFile)
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .disabled(transcribingRecordingURL != nil)
-
-                                    Button("名前変更") {
-                                        showRenameAlert(for: recordingFile)
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
-                            }
-
-                            HStack(spacing: 8) {
-                                if playingRecordingURL == recordingFile.url {
-                                    Text("再生中")
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                        .foregroundStyle(.blue)
-                                }
-
-                                if transcribingRecordingURL == recordingFile.url {
-                                    Text("文字起こし中")
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                        .foregroundStyle(.orange)
-                                }
-                            }
-
-                            if let transcription = transcriptions[recordingFile.name] {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack {
-                                        Text("文字起こし結果")
-                                            .font(.caption)
-                                            .fontWeight(.bold)
-                                            .foregroundStyle(.secondary)
-
-                                        Spacer()
-
-                                        Button("コピー") {
-                                            copyTranscriptionText(transcription.text)
-                                        }
-                                        .font(.caption)
-                                        .buttonStyle(.bordered)
-                                        .disabled(transcription.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                                    }
-
-                                    Text(transcription.text)
-                                        .font(.body)
-                                        .lineSpacing(4)
-
-                                    Text("文字起こし日時: \(transcription.createdAt.formatted(date: .numeric, time: .shortened))")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(12)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.secondary.opacity(0.08))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                            }
+                            Spacer()
                         }
-                        .padding(.vertical, 8)
+
+                        Button {
+                            if isRecording {
+                                stopRecording()
+                            } else {
+                                isShowingConsentConfirmation = true
+                            }
+                        } label: {
+                            Label(isRecording ? "録音停止" : "録音開始", systemImage: isRecording ? "stop.fill" : "mic.fill")
+                                .font(.title3)
+                                .fontWeight(.bold)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 56)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(isRecording ? .red : .accentColor)
+
+                        if let statusMessage {
+                            Text(statusMessage)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
-                    .listStyle(.plain)
+                    .padding(.vertical, 8)
+                }
+
+                Section("録音一覧") {
+                    if recordingFiles.isEmpty {
+                        Text("まだ録音はありません")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 32)
+                    } else {
+                        ForEach(recordingFiles) { recordingFile in
+                            recordingRow(for: recordingFile)
+                        }
+                    }
                 }
             }
-        }
-        .padding(24)
-        .onAppear {
-            loadSavedTranscriptions()
-            loadRecordingFiles(clearStatus: true)
-        }
-        .sheet(isPresented: $isShowingConsentConfirmation) {
-            consentConfirmationView
-        }
-        .alert("録音名を変更", isPresented: $isShowingRenameAlert) {
-            TextField("新しい名前", text: $newRecordingName)
+            .navigationTitle("打ち合わせ文字起こし")
+            .listStyle(.insetGrouped)
+            .onAppear {
+                loadSavedTranscriptions()
+                loadRecordingFiles(clearStatus: true)
+            }
+            .sheet(isPresented: $isShowingConsentConfirmation) {
+                consentConfirmationView
+            }
+            .alert("録音名を変更", isPresented: $isShowingRenameAlert) {
+                TextField("新しい名前", text: $newRecordingName)
 
-            Button("保存") {
-                renameSelectedRecordingFile()
+                Button("保存") {
+                    renameSelectedRecordingFile()
+                }
+
+                Button("キャンセル", role: .cancel) {
+                    recordingFileToRename = nil
+                    newRecordingName = ""
+                }
+            } message: {
+                Text("拡張子 .m4a は自動で付きます。")
+            }
+        }
+    }
+
+    private func recordingRow(for recordingFile: RecordingFile) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(recordingTitle(for: recordingFile))
+                        .font(.headline)
+
+                    Text(recordingFile.name)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Menu {
+                    Button(playingRecordingURL == recordingFile.url ? "停止" : "再生") {
+                        togglePlayback(for: recordingFile)
+                    }
+
+                    Button(transcribingRecordingURL == recordingFile.url ? "処理中" : "文字起こし") {
+                        transcribe(recordingFile)
+                    }
+                    .disabled(transcribingRecordingURL != nil)
+
+                    Button("名前変更") {
+                        showRenameAlert(for: recordingFile)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("録音操作")
             }
 
-            Button("キャンセル", role: .cancel) {
-                recordingFileToRename = nil
-                newRecordingName = ""
+            HStack(spacing: 8) {
+                if playingRecordingURL == recordingFile.url {
+                    statusBadge("再生中", color: .blue)
+                }
+
+                if transcribingRecordingURL == recordingFile.url {
+                    statusBadge("文字起こし中", color: .orange)
+                }
             }
-        } message: {
-            Text("拡張子 .m4a は自動で付きます。")
+
+            if let transcription = transcriptions[recordingFile.name] {
+                transcriptionView(transcription)
+            }
         }
+        .padding(.vertical, 8)
+    }
+
+    private func statusBadge(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption)
+            .fontWeight(.semibold)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(color.opacity(0.12))
+            .foregroundStyle(color)
+            .clipShape(Capsule())
+    }
+
+    private func transcriptionView(_ transcription: SavedTranscription) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("文字起こし結果")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button {
+                    copyTranscriptionText(transcription.text)
+                } label: {
+                    Label("コピー", systemImage: "doc.on.doc")
+                        .labelStyle(.titleAndIcon)
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(transcription.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            Text(transcription.text)
+                .font(.body)
+                .lineSpacing(4)
+                .textSelection(.enabled)
+
+            Text("文字起こし日時: \(transcription.createdAt.formatted(date: .numeric, time: .shortened))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var consentConfirmationView: some View {

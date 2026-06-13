@@ -288,6 +288,9 @@ struct ContentView: View {
             .onAppear {
                 audioPlayer.loadPlaybackInfo(for: recordingFile)
             }
+            .onDisappear {
+                stopPlaybackWhenLeavingDetail(for: recordingFile)
+            }
             .onChange(of: transcriptionText) { _, newText in
                 guard transcriptionScrollTargetID == recordingFile.id,
                       !newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -763,6 +766,15 @@ struct ContentView: View {
         }
 
         audioPlayer.seek(to: audioPlayer.currentTime + interval)
+        playbackSeekTime = nil
+    }
+
+    private func stopPlaybackWhenLeavingDetail(for recordingFile: RecordingFile) {
+        guard audioPlayer.activeRecordingURL == recordingFile.url else {
+            return
+        }
+
+        audioPlayer.stopPlayback()
         playbackSeekTime = nil
     }
 

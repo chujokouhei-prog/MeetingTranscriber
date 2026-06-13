@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var recordingFileToDelete: RecordingFile?
     @State private var transcriptionScrollTargetID: String?
     @State private var transcriptionErrorMessages: [String: String] = [:]
+    @State private var playbackSeekTime: TimeInterval?
     @State private var copyFeedback: CopyFeedback?
     @State private var copyFeedbackResetWorkItem: DispatchWorkItem?
 
@@ -160,6 +161,10 @@ struct ContentView: View {
                     statusBadge("再生中", color: .blue)
                 }
 
+                if audioPlayer.activeRecordingURL == recordingFile.url && audioPlayer.playbackState == .paused {
+                    statusBadge("一時停止中", color: .secondary)
+                }
+
                 if speechTranscriber.transcribingRecordingURL == recordingFile.url {
                     statusBadge("文字起こし中", color: .orange)
                 }
@@ -192,15 +197,8 @@ struct ContentView: View {
                     }
 
                     detailSection("操作") {
-                        VStack(spacing: 0) {
-                            Button {
-                                togglePlayback(for: recordingFile)
-                            } label: {
-                                Label(audioPlayer.playingRecordingURL == recordingFile.url ? "停止" : "再生", systemImage: audioPlayer.playingRecordingURL == recordingFile.url ? "stop.fill" : "play.fill")
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .contentShape(Rectangle())
-                            }
-                            .padding(.vertical, 10)
+                        VStack(spacing: 14) {
+                            playbackControlView(for: recordingFile)
 
                             Divider()
 
@@ -222,6 +220,14 @@ struct ContentView: View {
                                 statusBadge("再生中", color: .blue)
                             }
 
+                            if audioPlayer.activeRecordingURL == recordingFile.url && audioPlayer.playbackState == .loading {
+                                statusBadge("読み込み中", color: .blue)
+                            }
+
+                            if audioPlayer.activeRecordingURL == recordingFile.url && audioPlayer.playbackState == .paused {
+                                statusBadge("一時停止中", color: .secondary)
+                            }
+
                             if speechTranscriber.transcribingRecordingURL == recordingFile.url {
                                 statusBadge("文字起こし中", color: .orange)
                             }
@@ -233,7 +239,7 @@ struct ContentView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
 
-                            if audioPlayer.playingRecordingURL != recordingFile.url && speechTranscriber.transcribingRecordingURL != recordingFile.url {
+                            if audioPlayer.activeRecordingURL != recordingFile.url && speechTranscriber.transcribingRecordingURL != recordingFile.url {
                                 Text("待機中")
                                     .foregroundStyle(.secondary)
                             }
@@ -257,6 +263,9 @@ struct ContentView: View {
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("録音詳細")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                audioPlayer.loadPlaybackInfo(for: recordingFile)
+            }
             .onChange(of: transcriptionText) { _, newText in
                 guard transcriptionScrollTargetID == recordingFile.id,
                       !newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -281,6 +290,114 @@ struct ContentView: View {
                 transcriptionScrollTargetID = nil
             }
         }
+    }
+
+    private func playbackControlView(for recordingFile: RecordingFile) -> some View {
+        let isCurrentRecording = audioPlayer.activeRecordingURL == recordingFile.url
+        let isLoading = isCurrentRecording && audioPlayer.playbackState == .loading
+        let isPlaying = isCurrentRecording && audioPlayer.playbackState == .playing
+        let currentTime = isCurrentRecording ? audioPlayer.currentTime : 0
+        let duration = audioPlayer.loadedRecordingURL == recordingFile.url ? audioPlayer.duration : 0
+        let sliderUpperBound = max(duration, 1)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Button {
+                    togglePlayback(for: recordingFile)
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(Color.accentColor)
+                            .frame(width: 44, height: 44)
+
+                        if isLoading {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                                .padding(.leading, isPlaying ? 0 : 3)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isLoading)
+                .accessibilityLabel(isPlaying ? "一時停止" : "再生")
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(playbackStatusText(for: recordingFile))
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+
+                    Text("\(formattedPlaybackTime(currentTime)) / \(formattedPlaybackTime(duration))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+                Spacer()
+            }
+
+            Slider(
+                value: Binding(
+                    get: {
+                        playbackSeekTime ?? currentTime
+                    },
+                    set: { newValue in
+                        playbackSeekTime = newValue
+                    }
+                ),
+                in: 0...sliderUpperBound,
+                onEditingChanged: { isEditing in
+                    if !isEditing {
+                        audioPlayer.seek(to: playbackSeekTime ?? currentTime)
+                        playbackSeekTime = nil
+                    }
+                }
+            )
+            .disabled(duration <= 0 || isLoading)
+
+            HStack {
+                Text(formattedPlaybackTime(playbackSeekTime ?? currentTime))
+
+                Spacer()
+
+                Text(formattedPlaybackTime(duration))
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+        }
+    }
+
+    private func playbackStatusText(for recordingFile: RecordingFile) -> String {
+        guard audioPlayer.activeRecordingURL == recordingFile.url else {
+            return "再生準備完了"
+        }
+
+        switch audioPlayer.playbackState {
+        case .stopped:
+            return "再生準備完了"
+        case .loading:
+            return "読み込み中"
+        case .playing:
+            return "再生中"
+        case .paused:
+            return "一時停止中"
+        }
+    }
+
+    private func formattedPlaybackTime(_ time: TimeInterval) -> String {
+        guard time.isFinite && time > 0 else {
+            return "0:00"
+        }
+
+        let totalSeconds = Int(time.rounded())
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+
+        return "\(minutes):\(String(format: "%02d", seconds))"
     }
 
     private func statusBadge(_ text: String, color: Color) -> some View {

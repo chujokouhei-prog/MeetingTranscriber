@@ -79,6 +79,16 @@ final class RecordingFileStore: ObservableObject {
         )
     }
 
+    func delete(_ recordingFile: RecordingFile) throws {
+        if FileManager.default.fileExists(atPath: recordingFile.url.path) {
+            try FileManager.default.removeItem(at: recordingFile.url)
+        }
+
+        recordingFiles.removeAll {
+            $0.id == recordingFile.id || $0.url == recordingFile.url || $0.name == recordingFile.name
+        }
+    }
+
     func documentsFolderURL() -> URL {
         FileManager.default.urls(
             for: .documentDirectory,

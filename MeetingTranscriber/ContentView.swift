@@ -20,6 +20,8 @@ struct ContentView: View {
     @State private var isShowingRenameAlert = false
     @State private var recordingFileToRename: RecordingFile?
     @State private var newRecordingName = ""
+    @State private var isShowingDeleteConfirmation = false
+    @State private var recordingFileToDelete: RecordingFile?
 
     var body: some View {
         NavigationStack {
@@ -78,6 +80,13 @@ struct ContentView: View {
                             } label: {
                                 recordingRow(for: recordingFile)
                             }
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    showDeleteConfirmation(for: recordingFile)
+                                } label: {
+                                    Label("削除", systemImage: "trash")
+                                }
+                            }
                         }
                     }
                 }
@@ -103,6 +112,17 @@ struct ContentView: View {
                 }
             } message: {
                 Text("拡張子 .m4a は自動で付きます。")
+            }
+            .alert("録音を削除しますか？", isPresented: $isShowingDeleteConfirmation) {
+                Button("削除", role: .destructive) {
+                    deleteSelectedRecordingFile()
+                }
+
+                Button("キャンセル", role: .cancel) {
+                    recordingFileToDelete = nil
+                }
+            } message: {
+                Text("録音ファイルと文字起こし結果が削除されます。この操作は取り消せません。")
             }
         }
     }
@@ -344,6 +364,11 @@ struct ContentView: View {
         isShowingRenameAlert = true
     }
 
+    private func showDeleteConfirmation(for recordingFile: RecordingFile) {
+        recordingFileToDelete = recordingFile
+        isShowingDeleteConfirmation = true
+    }
+
     private func renameSelectedRecordingFile() {
         guard let recordingFile = recordingFileToRename else {
             return
@@ -365,6 +390,26 @@ struct ContentView: View {
         } catch {
             debugPrint("Failed to rename recording file: \(error.localizedDescription)")
             statusMessage = "録音名を変更できませんでした。もう一度お試しください。"
+        }
+    }
+
+    private func deleteSelectedRecordingFile() {
+        guard let recordingFile = recordingFileToDelete else {
+            return
+        }
+
+        audioPlayer.stopPlayback()
+        speechTranscriber.cancelTranscription()
+
+        do {
+            try recordingFileStore.delete(recordingFile)
+            transcriptionStore.deleteTranscription(for: recordingFile)
+            recordingFileToDelete = nil
+            statusMessage = "録音を削除しました"
+            loadRecordingFiles()
+        } catch {
+            debugPrint("Failed to delete recording file: \(error.localizedDescription)")
+            statusMessage = "録音を削除できませんでした。もう一度お試しください。"
         }
     }
 

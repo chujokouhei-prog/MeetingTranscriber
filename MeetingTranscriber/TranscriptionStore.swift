@@ -56,6 +56,23 @@ final class TranscriptionStore: ObservableObject {
         }
     }
 
+    func deleteTranscription(for recordingFile: RecordingFile) {
+        let possibleKeys = [
+            recordingFile.id,
+            recordingFile.name
+        ]
+        var didChange = false
+
+        for key in possibleKeys where transcriptions[key] != nil {
+            transcriptions[key] = nil
+            didChange = true
+        }
+
+        if didChange {
+            saveTranscriptions()
+        }
+    }
+
     func migrateFilenameKeysIfNeeded(recordingFiles: [RecordingFile]) {
         var didChange = false
 

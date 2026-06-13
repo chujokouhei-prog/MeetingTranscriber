@@ -35,6 +35,7 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
     }
 
     func pausePlayback() {
+        updatePlaybackProgress()
         audioPlayer?.pause()
         playbackState = .paused
         playingRecordingURL = nil
@@ -60,12 +61,19 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
     }
 
     func seek(to time: TimeInterval) {
-        guard let audioPlayer else {
+        if let audioPlayer {
+            let boundedTime = min(max(time, 0), audioPlayer.duration)
+            audioPlayer.currentTime = boundedTime
+            updatePlaybackProgress()
             return
         }
 
-        let boundedTime = min(max(time, 0), audioPlayer.duration)
-        audioPlayer.currentTime = boundedTime
+        guard duration > 0 else {
+            currentTime = 0
+            return
+        }
+
+        let boundedTime = min(max(time, 0), duration)
         currentTime = boundedTime
     }
 
@@ -104,6 +112,8 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
     }
 
     private func startPlayback(for recordingFile: RecordingFile) throws {
+        let requestedStartTime = loadedRecordingURL == recordingFile.url ? currentTime : 0
+
         stopPlayback()
         playbackState = .loading
         activeRecordingURL = recordingFile.url
@@ -121,6 +131,8 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
             player.delegate = self
             player.prepareToPlay()
             duration = player.duration
+            player.currentTime = min(max(requestedStartTime, 0), player.duration)
+            currentTime = player.currentTime
 
             guard player.play() else {
                 stopPlayback()
@@ -130,6 +142,7 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
             audioPlayer = player
             playbackState = .playing
             playingRecordingURL = recordingFile.url
+            updatePlaybackProgress()
             startPlaybackTimer()
         } catch {
             stopPlayback()
@@ -164,19 +177,31 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
     private func startPlaybackTimer() {
         stopPlaybackTimer()
 
-        playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            guard let self, let audioPlayer = self.audioPlayer else {
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            guard let self else {
                 return
             }
 
-            self.currentTime = audioPlayer.currentTime
-            self.duration = audioPlayer.duration
+            self.updatePlaybackProgress()
         }
+
+        RunLoop.main.add(timer, forMode: .common)
+        playbackTimer = timer
+        updatePlaybackProgress()
     }
 
     private func stopPlaybackTimer() {
         playbackTimer?.invalidate()
         playbackTimer = nil
+    }
+
+    private func updatePlaybackProgress() {
+        guard let audioPlayer else {
+            return
+        }
+
+        currentTime = audioPlayer.currentTime
+        duration = audioPlayer.duration
     }
 }
 

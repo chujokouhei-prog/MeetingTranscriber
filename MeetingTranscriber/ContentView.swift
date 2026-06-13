@@ -51,6 +51,7 @@ struct ContentView: View {
 
                                 Image(systemName: audioRecorder.isRecording ? "stop.fill" : "mic.fill")
                                     .opacity(0)
+                                    .accessibilityHidden(true)
                             }
                                 .font(.title3)
                                 .fontWeight(.bold)

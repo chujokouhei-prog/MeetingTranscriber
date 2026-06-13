@@ -225,10 +225,12 @@ struct ContentView: View {
                 }
                 .sorted { $0.createdAt > $1.createdAt }
 
+            let recordingFileNames = Set(recordingFiles.map(\.name))
+            deleteOldTranscriptionResults(recordingFileNames: recordingFileNames)
+
             if clearStatus {
                 statusMessage = nil
             }
-
         } catch {
             statusMessage = "録音ファイルを読み込めませんでした"
         }
@@ -366,6 +368,32 @@ struct ContentView: View {
             UserDefaults.standard.set(data, forKey: "savedTranscriptions")
         } catch {
             statusMessage = "文字起こし結果を保存できませんでした"
+        }
+    }
+
+    private func deleteOldTranscriptionResults(recordingFileNames: Set<String>) {
+        let now = Date()
+        let oneDay: TimeInterval = 24 * 60 * 60
+        var updatedTranscriptions = transcriptions
+
+        for (recordingFileName, transcription) in transcriptions {
+            let isRecordingFileDeleted = !recordingFileNames.contains(recordingFileName)
+            let isOlderThanOneDay = now.timeIntervalSince(transcription.createdAt) >= oneDay
+
+            if isRecordingFileDeleted || isOlderThanOneDay {
+                updatedTranscriptions[recordingFileName] = nil
+
+                if isRecordingFileDeleted {
+                    debugPrint("Deleted transcription because recording file is missing: \(recordingFileName)")
+                } else {
+                    debugPrint("Deleted old transcription: \(recordingFileName)")
+                }
+            }
+        }
+
+        if updatedTranscriptions.count != transcriptions.count {
+            transcriptions = updatedTranscriptions
+            saveTranscriptions()
         }
     }
 

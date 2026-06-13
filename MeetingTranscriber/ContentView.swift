@@ -86,6 +86,13 @@ struct ContentView: View {
                                 } label: {
                                     Label("削除", systemImage: "trash")
                                 }
+
+                                Button {
+                                    showRenameAlert(for: recordingFile)
+                                } label: {
+                                    Label("名称変更", systemImage: "pencil")
+                                }
+                                .tint(.blue)
                             }
                         }
                     }

@@ -23,6 +23,7 @@ struct ContentView: View {
     @State private var isShowingDeleteConfirmation = false
     @State private var recordingFileToDelete: RecordingFile?
     @State private var transcriptionScrollTargetID: String?
+    @State private var transcriptionErrorMessages: [String: String] = [:]
     @State private var copyFeedback: CopyFeedback?
     @State private var copyFeedbackResetWorkItem: DispatchWorkItem?
 
@@ -223,6 +224,13 @@ struct ContentView: View {
 
                             if speechTranscriber.transcribingRecordingURL == recordingFile.url {
                                 statusBadge("文字起こし中", color: .orange)
+                            }
+
+                            if let transcriptionErrorMessage = transcriptionErrorMessages[recordingFile.id] {
+                                Label(transcriptionErrorMessage, systemImage: "exclamationmark.triangle.fill")
+                                    .font(.footnote)
+                                    .foregroundStyle(.red)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
 
                             if audioPlayer.playingRecordingURL != recordingFile.url && speechTranscriber.transcribingRecordingURL != recordingFile.url {
@@ -504,22 +512,30 @@ struct ContentView: View {
         audioPlayer.stopPlayback()
         statusMessage = nil
         transcriptionScrollTargetID = recordingFile.id
+        transcriptionErrorMessages[recordingFile.id] = nil
 
         speechTranscriber.transcribe(
             recordingFile: recordingFile,
-            onResult: { text, isFinal in
-                transcriptionStore.updateTranscription(text: text, for: recordingFile)
+            onResult: { text, _ in
+                let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-                if isFinal {
-                    transcriptionStore.saveTranscriptions()
+                guard !trimmedText.isEmpty else {
+                    return
                 }
+
+                transcriptionErrorMessages[recordingFile.id] = nil
+                transcriptionStore.updateTranscription(text: trimmedText, for: recordingFile)
+                transcriptionStore.saveTranscriptions()
             },
             onCompletion: { error in
                 guard let error else {
                     return
                 }
 
-                statusMessage = message(for: error)
+                let message = message(for: error)
+                debugPrint("Transcription failed for \(recordingFile.name): \(error.logDescription)")
+                transcriptionErrorMessages[recordingFile.id] = message
+                statusMessage = message
             }
         )
     }
@@ -556,6 +572,12 @@ struct ContentView: View {
 
     private func message(for error: SpeechTranscriberError) -> String {
         switch error {
+        case .recordingFileNotFound:
+            return "録音ファイルが見つかりません。録音一覧を開き直して、もう一度お試しください。"
+        case .recordingFileEmpty:
+            return "録音ファイルに音声が保存されていない可能性があります。録音し直してください。"
+        case .recordingFileUnavailable:
+            return "録音ファイルを確認できませんでした。ファイルの保存状態を確認してください。"
         case .speechPermissionDenied:
             return "音声認識の使用が許可されていません。設定アプリで音声認識を許可してください。"
         case .speechRestricted:
@@ -568,8 +590,10 @@ struct ContentView: View {
             return "日本語の音声認識を使用できません。端末の言語設定や音声認識の利用状況を確認してください。"
         case .recognizerUnavailable:
             return "現在、音声認識を使用できません。端末の状態を確認して、時間をおいて再試行してください。"
-        case .recognitionFailed:
-            return "文字起こしに失敗しました。録音の音量や周囲の雑音を確認して、もう一度お試しください。"
+        case .noRecognizableSpeech:
+            return "音声を認識できませんでした。録音の音量や周囲の雑音を確認して、もう一度お試しください。"
+        case .recognitionFailed(let detail):
+            return "文字起こしに失敗しました。録音の音量、通信状況、音声認識の利用状況を確認してください。詳細: \(detail)"
         }
     }
 }

@@ -14,6 +14,7 @@ final class SpeechTranscriber: ObservableObject {
 
     private var speechRecognitionTask: SFSpeechRecognitionTask?
     private var didFinishCurrentTranscription = false
+    private var didReceiveNonEmptyTranscription = false
 
     func transcribe(
         recordingFile: RecordingFile,
@@ -22,7 +23,24 @@ final class SpeechTranscriber: ObservableObject {
     ) {
         cancelTranscription()
         didFinishCurrentTranscription = false
+        didReceiveNonEmptyTranscription = false
         transcribingRecordingURL = recordingFile.url
+
+        guard FileManager.default.fileExists(atPath: recordingFile.url.path) else {
+            finish(with: .recordingFileNotFound, onCompletion: onCompletion)
+            return
+        }
+
+        do {
+            let resourceValues = try recordingFile.url.resourceValues(forKeys: [.fileSizeKey])
+            guard let fileSize = resourceValues.fileSize, fileSize > 0 else {
+                finish(with: .recordingFileEmpty, onCompletion: onCompletion)
+                return
+            }
+        } catch {
+            finish(with: .recordingFileUnavailable(error.localizedDescription), onCompletion: onCompletion)
+            return
+        }
 
         SFSpeechRecognizer.requestAuthorization { [weak self] status in
             DispatchQueue.main.async {
@@ -74,10 +92,7 @@ final class SpeechTranscriber: ObservableObject {
 
         let request = SFSpeechURLRecognitionRequest(url: recordingFile.url)
         request.shouldReportPartialResults = true
-
-        if speechRecognizer.supportsOnDeviceRecognition {
-            request.requiresOnDeviceRecognition = true
-        }
+        request.taskHint = .dictation
 
         speechRecognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
             DispatchQueue.main.async {
@@ -90,15 +105,29 @@ final class SpeechTranscriber: ObservableObject {
                 }
 
                 if let result {
-                    onResult(result.bestTranscription.formattedString, result.isFinal)
+                    let transcriptionText = result.bestTranscription.formattedString
+                    let hasText = !transcriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+                    if hasText {
+                        self.didReceiveNonEmptyTranscription = true
+                        onResult(transcriptionText, result.isFinal)
+                    }
 
                     if result.isFinal {
-                        self.finish(with: nil, onCompletion: onCompletion)
+                        self.finish(
+                            with: self.didReceiveNonEmptyTranscription ? nil : .noRecognizableSpeech,
+                            onCompletion: onCompletion
+                        )
                     }
                 }
 
-                if error != nil {
-                    self.finish(with: .recognitionFailed, onCompletion: onCompletion)
+                if let error {
+                    debugPrint("Speech recognition failed: \(error.localizedDescription)")
+
+                    self.finish(
+                        with: self.didReceiveNonEmptyTranscription ? nil : .recognitionFailed(error.localizedDescription),
+                        onCompletion: onCompletion
+                    )
                 }
             }
         }
@@ -115,16 +144,50 @@ final class SpeechTranscriber: ObservableObject {
         didFinishCurrentTranscription = true
         speechRecognitionTask = nil
         transcribingRecordingURL = nil
+        if let error {
+            debugPrint("Finished transcription with error: \(error.logDescription)")
+        }
         onCompletion(error)
     }
 }
 
 enum SpeechTranscriberError: Error {
+    case recordingFileNotFound
+    case recordingFileEmpty
+    case recordingFileUnavailable(String)
     case speechPermissionDenied
     case speechRestricted
     case speechPermissionNotDetermined
     case speechAuthorizationFailed
     case japaneseRecognizerUnavailable
     case recognizerUnavailable
-    case recognitionFailed
+    case noRecognizableSpeech
+    case recognitionFailed(String)
+
+    var logDescription: String {
+        switch self {
+        case .recordingFileNotFound:
+            return "Recording file was not found."
+        case .recordingFileEmpty:
+            return "Recording file was empty."
+        case .recordingFileUnavailable(let detail):
+            return "Recording file could not be checked: \(detail)"
+        case .speechPermissionDenied:
+            return "Speech recognition permission was denied."
+        case .speechRestricted:
+            return "Speech recognition is restricted."
+        case .speechPermissionNotDetermined:
+            return "Speech recognition permission is not determined."
+        case .speechAuthorizationFailed:
+            return "Speech recognition authorization failed."
+        case .japaneseRecognizerUnavailable:
+            return "Japanese speech recognizer is unavailable."
+        case .recognizerUnavailable:
+            return "Speech recognizer is currently unavailable."
+        case .noRecognizableSpeech:
+            return "No recognizable speech was found."
+        case .recognitionFailed(let detail):
+            return "Recognition failed: \(detail)"
+        }
+    }
 }

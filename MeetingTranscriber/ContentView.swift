@@ -40,6 +40,7 @@ struct ContentView: View {
     @State private var transcriptions: [String: SavedTranscription] = [:]
     @State private var statusMessage: String?
     @State private var recordingFiles: [RecordingFile] = []
+    @State private var isShowingConsentConfirmation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -58,7 +59,7 @@ struct ContentView: View {
                 if isRecording {
                     stopRecording()
                 } else {
-                    startRecording()
+                    isShowingConsentConfirmation = true
                 }
             } label: {
                 Label(isRecording ? "録音停止" : "録音開始", systemImage: isRecording ? "stop.fill" : "mic.fill")
@@ -165,6 +166,48 @@ struct ContentView: View {
             loadSavedTranscriptions()
             loadRecordingFiles(clearStatus: true)
         }
+        .sheet(isPresented: $isShowingConsentConfirmation) {
+            consentConfirmationView
+        }
+    }
+
+    private var consentConfirmationView: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            Text("録音前の確認")
+                .font(.title)
+                .fontWeight(.bold)
+
+            VStack(alignment: .leading, spacing: 16) {
+                Label("この打ち合わせの音声を録音します", systemImage: "mic.fill")
+                Label("録音した音声は文字起こしに使用します", systemImage: "text.bubble.fill")
+                Label("保存されたデータは一定時間後に削除されます", systemImage: "clock.fill")
+                Label("相手の同意を得たうえで録音を開始してください", systemImage: "person.fill.checkmark")
+            }
+            .font(.body)
+
+            Spacer()
+
+            Button {
+                isShowingConsentConfirmation = false
+                startRecording()
+            } label: {
+                Text("同意を得たので録音開始")
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button {
+                isShowingConsentConfirmation = false
+            } label: {
+                Text("キャンセル")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(24)
     }
 
     private func startRecording() {

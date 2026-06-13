@@ -94,10 +94,10 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(alignment: .top) {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text(recordingFile.name)
+                                    Text(recordingTitle(for: recordingFile))
                                         .font(.headline)
 
-                                    Text(recordingFile.createdAt.formatted(date: .numeric, time: .shortened))
+                                    Text(recordingFile.name)
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
                                 }
@@ -273,8 +273,31 @@ struct ContentView: View {
     }
 
     private func newRecordingURL() -> URL {
-        let fileName = "recording-\(Int(Date().timeIntervalSince1970)).m4a"
-        return documentsFolderURL().appendingPathComponent(fileName)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm"
+
+        let baseFileName = "meeting_\(formatter.string(from: Date()))"
+        return uniqueRecordingURL(baseFileName: baseFileName)
+    }
+
+    private func recordingTitle(for recordingFile: RecordingFile) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy年M月d日 H:mm"
+
+        return "\(formatter.string(from: recordingFile.createdAt)) の録音"
+    }
+
+    private func uniqueRecordingURL(baseFileName: String) -> URL {
+        let documentsFolder = documentsFolderURL()
+        var fileURL = documentsFolder.appendingPathComponent("\(baseFileName).m4a")
+        var number = 2
+
+        while FileManager.default.fileExists(atPath: fileURL.path) {
+            fileURL = documentsFolder.appendingPathComponent("\(baseFileName)_\(number).m4a")
+            number += 1
+        }
+
+        return fileURL
     }
 
     private func loadRecordingFiles(clearStatus: Bool = false) {

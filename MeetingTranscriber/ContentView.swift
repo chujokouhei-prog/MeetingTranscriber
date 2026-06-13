@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVFoundation
+import Speech
 
 struct RecordingFile: Identifiable {
     let id: URL
@@ -29,6 +30,9 @@ struct ContentView: View {
     @State private var audioPlayer: AVAudioPlayer?
     @State private var audioPlayerDelegate = AudioPlayerDelegate()
     @State private var playingRecordingURL: URL?
+    @State private var speechRecognitionTask: SFSpeechRecognitionTask?
+    @State private var transcribingRecordingURL: URL?
+    @State private var transcriptions: [URL: String] = [:]
     @State private var statusMessage: String?
     @State private var recordingFiles: [RecordingFile] = []
 
@@ -85,14 +89,34 @@ struct ContentView: View {
                                     .font(.caption)
                                     .foregroundStyle(.tint)
                             }
+
+                            if transcribingRecordingURL == recordingFile.url {
+                                Text("文字起こし中")
+                                    .font(.caption)
+                                    .foregroundStyle(.tint)
+                            }
+
+                            if let transcription = transcriptions[recordingFile.url] {
+                                Text(transcription)
+                                    .font(.subheadline)
+                                    .padding(.top, 6)
+                            }
                         }
 
                         Spacer()
 
-                        Button(playingRecordingURL == recordingFile.url ? "停止" : "再生") {
-                            togglePlayback(for: recordingFile)
+                        VStack(spacing: 8) {
+                            Button(playingRecordingURL == recordingFile.url ? "停止" : "再生") {
+                                togglePlayback(for: recordingFile)
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button(transcribingRecordingURL == recordingFile.url ? "文字起こし中" : "文字起こし") {
+                                transcribe(recordingFile)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(transcribingRecordingURL != nil)
                         }
-                        .buttonStyle(.bordered)
                     }
                     .padding(.vertical, 4)
                 }
@@ -120,6 +144,7 @@ struct ContentView: View {
 
     private func beginRecording() {
         stopPlayback()
+        cancelTranscription()
 
         let audioSession = AVAudioSession.sharedInstance()
 
@@ -232,6 +257,81 @@ struct ContentView: View {
         audioPlayer?.stop()
         audioPlayer = nil
         playingRecordingURL = nil
+    }
+
+    private func transcribe(_ recordingFile: RecordingFile) {
+        stopPlayback()
+        cancelTranscription()
+
+        transcribingRecordingURL = recordingFile.url
+        transcriptions[recordingFile.url] = nil
+        statusMessage = nil
+
+        SFSpeechRecognizer.requestAuthorization { status in
+            DispatchQueue.main.async {
+                switch status {
+                case .authorized:
+                    startSpeechRecognition(for: recordingFile)
+                case .denied:
+                    transcribingRecordingURL = nil
+                    statusMessage = "音声認識の使用が許可されていません"
+                case .restricted:
+                    transcribingRecordingURL = nil
+                    statusMessage = "この端末では音声認識を使用できません"
+                case .notDetermined:
+                    transcribingRecordingURL = nil
+                    statusMessage = "音声認識の許可を確認できませんでした"
+                @unknown default:
+                    transcribingRecordingURL = nil
+                    statusMessage = "音声認識を開始できませんでした"
+                }
+            }
+        }
+    }
+
+    private func startSpeechRecognition(for recordingFile: RecordingFile) {
+        guard let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "ja_JP")) else {
+            transcribingRecordingURL = nil
+            statusMessage = "日本語の音声認識を使用できません"
+            return
+        }
+
+        guard speechRecognizer.isAvailable else {
+            transcribingRecordingURL = nil
+            statusMessage = "現在、音声認識を使用できません"
+            return
+        }
+
+        let request = SFSpeechURLRecognitionRequest(url: recordingFile.url)
+        request.shouldReportPartialResults = true
+
+        speechRecognitionTask = speechRecognizer.recognitionTask(with: request) { result, error in
+            DispatchQueue.main.async {
+                if let result {
+                    transcriptions[recordingFile.url] = result.bestTranscription.formattedString
+
+                    if result.isFinal {
+                        speechRecognitionTask = nil
+                        transcribingRecordingURL = nil
+                    }
+                }
+
+                if error != nil {
+                    speechRecognitionTask = nil
+                    transcribingRecordingURL = nil
+
+                    if transcriptions[recordingFile.url] == nil {
+                        statusMessage = "文字起こしに失敗しました"
+                    }
+                }
+            }
+        }
+    }
+
+    private func cancelTranscription() {
+        speechRecognitionTask?.cancel()
+        speechRecognitionTask = nil
+        transcribingRecordingURL = nil
     }
 
     private func deleteOldRecordingFiles() {

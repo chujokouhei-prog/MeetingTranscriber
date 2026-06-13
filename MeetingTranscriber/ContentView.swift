@@ -562,7 +562,11 @@ struct ContentView: View {
     }
 
     private func transcriptionView(_ transcription: SavedTranscription) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let readableText = transcription.readableText
+        let recognizedText = transcription.recognizedText
+        let hasDifferentRecognizedText = !recognizedText.isEmpty && recognizedText != readableText
+
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("文字起こし結果")
                     .font(.caption)
@@ -572,7 +576,7 @@ struct ContentView: View {
                 Spacer()
 
                 Button {
-                    copyTranscriptionText(transcription.text)
+                    copyTranscriptionText(readableText)
                 } label: {
                     Label(copyFeedback?.message ?? "コピー", systemImage: copyFeedback?.systemImage ?? "doc.on.doc")
                         .labelStyle(.titleAndIcon)
@@ -581,15 +585,29 @@ struct ContentView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .tint(copyFeedback?.color)
-                .disabled(transcription.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(readableText.isEmpty)
             }
 
-            Text(transcription.text)
+            Text(readableText)
                 .font(.body)
                 .lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
+
+            if hasDifferentRecognizedText {
+                DisclosureGroup("元の認識テキスト") {
+                    Text(recognizedText)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .padding(.top, 4)
+                }
+                .font(.caption)
+            }
 
             Text("文字起こし日時: \(transcription.createdAt.formatted(date: .numeric, time: .shortened))")
                 .font(.caption)

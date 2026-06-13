@@ -43,4 +43,35 @@ struct RecordingFile: Identifiable, Equatable {
 struct SavedTranscription: Codable {
     let text: String
     let createdAt: Date
+    let rawText: String?
+    let formattedText: String?
+    let textBundle: TranscriptionTextBundle?
+
+    var recognizedText: String {
+        let candidate = textBundle?.recognizedText ?? rawText ?? text
+        return candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var readableText: String {
+        let candidate = textBundle?.readableText ?? formattedText ?? text
+        return candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var aiInputText: String {
+        readableText
+    }
+
+    var displayText: String {
+        readableText
+    }
+
+    var originalText: String {
+        recognizedText
+    }
+}
+
+struct TranscriptionTextBundle: Codable {
+    let recognizedText: String
+    let readableText: String
+    let formatterVersion: Int
 }

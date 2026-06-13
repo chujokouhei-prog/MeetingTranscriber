@@ -30,9 +30,18 @@ final class TranscriptionStore: ObservableObject {
     }
 
     func updateTranscription(text: String, for recordingFile: RecordingFile) {
+        let formattedText = TranscriptionFormatter.formattedJapaneseText(from: text)
+
         transcriptions[recordingFile.id] = SavedTranscription(
-            text: text,
-            createdAt: Date()
+            text: formattedText,
+            createdAt: Date(),
+            rawText: text,
+            formattedText: formattedText,
+            textBundle: TranscriptionTextBundle(
+                recognizedText: text,
+                readableText: formattedText,
+                formatterVersion: TranscriptionFormatter.currentVersion
+            )
         )
     }
 

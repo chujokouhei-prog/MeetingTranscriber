@@ -22,6 +22,7 @@ struct ContentView: View {
     @State private var newRecordingName = ""
     @State private var isShowingDeleteConfirmation = false
     @State private var recordingFileToDelete: RecordingFile?
+    @State private var transcriptionScrollTargetID: String?
 
     var body: some View {
         NavigationStack {
@@ -170,64 +171,106 @@ struct ContentView: View {
 
     private func recordingDetailView(recordingID: String, fallbackRecordingFile: RecordingFile) -> some View {
         let recordingFile = recordingFileStore.recordingFiles.first { $0.id == recordingID } ?? fallbackRecordingFile
+        let transcriptionText = transcriptionStore.transcription(for: recordingFile)?.text ?? ""
 
-        return List {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(recordingFile.title)
-                        .font(.headline)
+        return ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    detailSection {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(recordingFile.title)
+                                .font(.headline)
+                                .fixedSize(horizontal: false, vertical: true)
 
-                    Text("作成日時: \(recordingFile.createdAt.formatted(date: .numeric, time: .shortened))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                            Text("作成日時: \(recordingFile.createdAt.formatted(date: .numeric, time: .shortened))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    detailSection("操作") {
+                        VStack(spacing: 0) {
+                            Button {
+                                togglePlayback(for: recordingFile)
+                            } label: {
+                                Label(audioPlayer.playingRecordingURL == recordingFile.url ? "停止" : "再生", systemImage: audioPlayer.playingRecordingURL == recordingFile.url ? "stop.fill" : "play.fill")
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .padding(.vertical, 10)
+
+                            Divider()
+
+                            Button {
+                                transcribe(recordingFile)
+                            } label: {
+                                Label(speechTranscriber.transcribingRecordingURL == recordingFile.url ? "処理中" : "文字起こし", systemImage: "text.bubble")
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .padding(.vertical, 10)
+                            .disabled(speechTranscriber.transcribingRecordingURL != nil)
+                        }
+                    }
+
+                    detailSection("状態") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if audioPlayer.playingRecordingURL == recordingFile.url {
+                                statusBadge("再生中", color: .blue)
+                            }
+
+                            if speechTranscriber.transcribingRecordingURL == recordingFile.url {
+                                statusBadge("文字起こし中", color: .orange)
+                            }
+
+                            if audioPlayer.playingRecordingURL != recordingFile.url && speechTranscriber.transcribingRecordingURL != recordingFile.url {
+                                Text("待機中")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    detailSection("文字起こし") {
+                        if let transcription = transcriptionStore.transcription(for: recordingFile) {
+                            transcriptionView(transcription)
+                        } else {
+                            Text("まだ文字起こし結果はありません")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .id(transcriptionSectionID(for: recordingFile))
                 }
-                .padding(.vertical, 4)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 20)
             }
-
-            Section("操作") {
-                Button {
-                    togglePlayback(for: recordingFile)
-                } label: {
-                    Label(audioPlayer.playingRecordingURL == recordingFile.url ? "停止" : "再生", systemImage: audioPlayer.playingRecordingURL == recordingFile.url ? "stop.fill" : "play.fill")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("録音詳細")
+            .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: transcriptionText) { _, newText in
+                guard transcriptionScrollTargetID == recordingFile.id,
+                      !newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return
                 }
 
-                Button {
-                    transcribe(recordingFile)
-                } label: {
-                    Label(speechTranscriber.transcribingRecordingURL == recordingFile.url ? "処理中" : "文字起こし", systemImage: "text.bubble")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .disabled(speechTranscriber.transcribingRecordingURL != nil)
-            }
-
-            Section("状態") {
-                if audioPlayer.playingRecordingURL == recordingFile.url {
-                    statusBadge("再生中", color: .blue)
-                }
-
-                if speechTranscriber.transcribingRecordingURL == recordingFile.url {
-                    statusBadge("文字起こし中", color: .orange)
-                }
-
-                if audioPlayer.playingRecordingURL != recordingFile.url && speechTranscriber.transcribingRecordingURL != recordingFile.url {
-                    Text("待機中")
-                        .foregroundStyle(.secondary)
+                withAnimation(.easeInOut) {
+                    scrollProxy.scrollTo(transcriptionSectionID(for: recordingFile), anchor: .top)
                 }
             }
-
-            Section("文字起こし") {
-                if let transcription = transcriptionStore.transcription(for: recordingFile) {
-                    transcriptionView(transcription)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                } else {
-                    Text("まだ文字起こし結果はありません")
-                        .foregroundStyle(.secondary)
+            .onChange(of: speechTranscriber.transcribingRecordingURL) { _, transcribingURL in
+                guard transcribingURL == nil,
+                      transcriptionScrollTargetID == recordingFile.id,
+                      transcriptionStore.transcription(for: recordingFile) != nil else {
+                    return
                 }
+
+                withAnimation(.easeInOut) {
+                    scrollProxy.scrollTo(transcriptionSectionID(for: recordingFile), anchor: .top)
+                }
+
+                transcriptionScrollTargetID = nil
             }
         }
-        .navigationTitle("録音詳細")
-        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func statusBadge(_ text: String, color: Color) -> some View {
@@ -239,6 +282,30 @@ struct ContentView: View {
             .background(color.opacity(0.12))
             .foregroundStyle(color)
             .clipShape(Capsule())
+    }
+
+    private func detailSection<Content: View>(
+        _ title: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let title {
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.secondary)
+            }
+
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func transcriptionSectionID(for recordingFile: RecordingFile) -> String {
+        "transcription-\(recordingFile.id)"
     }
 
     private func transcriptionView(_ transcription: SavedTranscription) -> some View {
@@ -266,16 +333,15 @@ struct ContentView: View {
             Text(transcription.text)
                 .font(.body)
                 .lineSpacing(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
 
             Text("文字起こし日時: \(transcription.createdAt.formatted(date: .numeric, time: .shortened))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var consentConfirmationView: some View {
@@ -434,6 +500,7 @@ struct ContentView: View {
     private func transcribe(_ recordingFile: RecordingFile) {
         audioPlayer.stopPlayback()
         statusMessage = nil
+        transcriptionScrollTargetID = recordingFile.id
 
         speechTranscriber.transcribe(
             recordingFile: recordingFile,

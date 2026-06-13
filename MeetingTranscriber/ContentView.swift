@@ -94,7 +94,14 @@ struct ContentView: View {
                             .padding(.vertical, 32)
                     } else {
                         ForEach(recordingFiles) { recordingFile in
-                            recordingRow(for: recordingFile)
+                            NavigationLink {
+                                recordingDetailView(
+                                    createdAt: recordingFile.createdAt,
+                                    fallbackRecordingFile: recordingFile
+                                )
+                            } label: {
+                                recordingRow(for: recordingFile)
+                            }
                         }
                     }
                 }
@@ -126,39 +133,13 @@ struct ContentView: View {
     }
 
     private func recordingRow(for recordingFile: RecordingFile) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(recordingTitle(for: recordingFile))
-                        .font(.headline)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(recordingTitle(for: recordingFile))
+                .font(.headline)
 
-                    Text(recordingFile.name)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Menu {
-                    Button(playingRecordingURL == recordingFile.url ? "停止" : "再生") {
-                        togglePlayback(for: recordingFile)
-                    }
-
-                    Button(transcribingRecordingURL == recordingFile.url ? "処理中" : "文字起こし") {
-                        transcribe(recordingFile)
-                    }
-                    .disabled(transcribingRecordingURL != nil)
-
-                    Button("名前変更") {
-                        showRenameAlert(for: recordingFile)
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.title3)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("録音操作")
-            }
+            Text(recordingFile.name)
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {
                 if playingRecordingURL == recordingFile.url {
@@ -168,13 +149,86 @@ struct ContentView: View {
                 if transcribingRecordingURL == recordingFile.url {
                     statusBadge("文字起こし中", color: .orange)
                 }
-            }
 
-            if let transcription = transcriptions[recordingFile.name] {
-                transcriptionView(transcription)
+                if transcriptions[recordingFile.name] != nil {
+                    statusBadge("文字起こし済み", color: .green)
+                }
             }
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
+    }
+
+    private func recordingDetailView(createdAt: Date, fallbackRecordingFile: RecordingFile) -> some View {
+        let recordingFile = recordingFiles.first { $0.createdAt == createdAt } ?? fallbackRecordingFile
+
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(recordingTitle(for: recordingFile))
+                        .font(.headline)
+
+                    Text(recordingFile.name)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text("作成日時: \(recordingFile.createdAt.formatted(date: .numeric, time: .shortened))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section("操作") {
+                Button {
+                    togglePlayback(for: recordingFile)
+                } label: {
+                    Label(playingRecordingURL == recordingFile.url ? "停止" : "再生", systemImage: playingRecordingURL == recordingFile.url ? "stop.fill" : "play.fill")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Button {
+                    transcribe(recordingFile)
+                } label: {
+                    Label(transcribingRecordingURL == recordingFile.url ? "処理中" : "文字起こし", systemImage: "text.bubble")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .disabled(transcribingRecordingURL != nil)
+
+                Button {
+                    showRenameAlert(for: recordingFile)
+                } label: {
+                    Label("名前変更", systemImage: "pencil")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            Section("状態") {
+                if playingRecordingURL == recordingFile.url {
+                    statusBadge("再生中", color: .blue)
+                }
+
+                if transcribingRecordingURL == recordingFile.url {
+                    statusBadge("文字起こし中", color: .orange)
+                }
+
+                if playingRecordingURL != recordingFile.url && transcribingRecordingURL != recordingFile.url {
+                    Text("待機中")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("文字起こし") {
+                if let transcription = transcriptions[recordingFile.name] {
+                    transcriptionView(transcription)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                } else {
+                    Text("まだ文字起こし結果はありません")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("録音詳細")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func statusBadge(_ text: String, color: Color) -> some View {

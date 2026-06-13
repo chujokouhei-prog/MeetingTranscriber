@@ -196,22 +196,12 @@ struct ContentView: View {
                         }
                     }
 
-                    detailSection("操作") {
-                        VStack(spacing: 14) {
-                            playbackControlView(for: recordingFile)
+                    detailSection("再生") {
+                        playbackControlView(for: recordingFile)
+                    }
 
-                            Divider()
-
-                            Button {
-                                transcribe(recordingFile)
-                            } label: {
-                                Label(speechTranscriber.transcribingRecordingURL == recordingFile.url ? "処理中" : "文字起こし", systemImage: "text.bubble")
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .contentShape(Rectangle())
-                            }
-                            .padding(.vertical, 10)
-                            .disabled(speechTranscriber.transcribingRecordingURL != nil)
-                        }
+                    detailSection("文字起こし") {
+                        transcriptionActionView(for: recordingFile)
                     }
 
                     detailSection("状態") {
@@ -246,7 +236,7 @@ struct ContentView: View {
                         }
                     }
 
-                    detailSection("文字起こし") {
+                    detailSection("文字起こし結果") {
                         if let transcription = transcriptionStore.transcription(for: recordingFile) {
                             transcriptionView(transcription)
                         } else {
@@ -326,9 +316,14 @@ struct ContentView: View {
                 .accessibilityLabel(isPlaying ? "一時停止" : "再生")
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(playbackStatusText(for: recordingFile))
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                    HStack(spacing: 6) {
+                        Image(systemName: "waveform")
+                            .foregroundStyle(.secondary)
+
+                        Text(playbackStatusText(for: recordingFile))
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                    }
 
                     Text("\(formattedPlaybackTime(currentTime)) / \(formattedPlaybackTime(duration))")
                         .font(.caption)
@@ -369,6 +364,76 @@ struct ContentView: View {
             .foregroundStyle(.secondary)
             .monospacedDigit()
         }
+    }
+
+    private func transcriptionActionView(for recordingFile: RecordingFile) -> some View {
+        let state = transcriptionActionState(for: recordingFile)
+
+        return Button {
+            transcribe(recordingFile)
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(state.tint.opacity(0.14))
+                        .frame(width: 42, height: 42)
+
+                    if state.isProcessing {
+                        ProgressView()
+                            .tint(state.tint)
+                    } else {
+                        Image(systemName: state.systemImage)
+                            .font(.headline)
+                            .foregroundStyle(state.tint)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(state.title)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.primary)
+
+                    Text(state.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                Image(systemName: state.trailingSystemImage)
+                    .font(.subheadline)
+                    .foregroundStyle(state.tint)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(state.backgroundColor)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(state.tint.opacity(0.22), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(state.isProcessing || speechTranscriber.transcribingRecordingURL != nil)
+    }
+
+    private func transcriptionActionState(for recordingFile: RecordingFile) -> TranscriptionActionState {
+        if speechTranscriber.transcribingRecordingURL == recordingFile.url {
+            return .processing
+        }
+
+        if transcriptionErrorMessages[recordingFile.id] != nil {
+            return .failed
+        }
+
+        if transcriptionStore.transcription(for: recordingFile) != nil {
+            return .completed
+        }
+
+        return .ready
     }
 
     private func playbackStatusText(for recordingFile: RecordingFile) -> String {
@@ -744,5 +809,96 @@ private enum CopyFeedback {
         case .failure:
             return .red
         }
+    }
+}
+
+private enum TranscriptionActionState {
+    case ready
+    case processing
+    case completed
+    case failed
+
+    var title: String {
+        switch self {
+        case .ready:
+            return "文字起こしを開始"
+        case .processing:
+            return "文字起こし中"
+        case .completed:
+            return "文字起こし済み"
+        case .failed:
+            return "もう一度文字起こし"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .ready:
+            return "録音音声からテキストを作成"
+        case .processing:
+            return "音声を解析しています"
+        case .completed:
+            return "結果を下に表示しています"
+        case .failed:
+            return "前回は完了できませんでした"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .ready:
+            return "text.bubble.fill"
+        case .processing:
+            return "text.bubble.fill"
+        case .completed:
+            return "checkmark"
+        case .failed:
+            return "arrow.clockwise"
+        }
+    }
+
+    var trailingSystemImage: String {
+        switch self {
+        case .ready, .failed:
+            return "chevron.right"
+        case .processing:
+            return "hourglass"
+        case .completed:
+            return "checkmark.circle.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .ready:
+            return .accentColor
+        case .processing:
+            return .orange
+        case .completed:
+            return .green
+        case .failed:
+            return .red
+        }
+    }
+
+    var backgroundColor: Color {
+        switch self {
+        case .ready:
+            return Color.accentColor.opacity(0.08)
+        case .processing:
+            return Color.orange.opacity(0.08)
+        case .completed:
+            return Color.green.opacity(0.08)
+        case .failed:
+            return Color.red.opacity(0.08)
+        }
+    }
+
+    var isProcessing: Bool {
+        if case .processing = self {
+            return true
+        }
+
+        return false
     }
 }

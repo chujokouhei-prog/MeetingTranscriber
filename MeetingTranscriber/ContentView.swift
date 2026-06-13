@@ -9,14 +9,26 @@ import SwiftUI
 import AVFoundation
 
 struct RecordingFile: Identifiable {
-    let id = UUID()
+    let id: URL
     let name: String
     let createdAt: Date
+    let url: URL
+}
+
+final class AudioPlayerDelegate: NSObject, AVAudioPlayerDelegate {
+    var didFinishPlaying: (() -> Void)?
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        didFinishPlaying?()
+    }
 }
 
 struct ContentView: View {
     @State private var isRecording = false
     @State private var audioRecorder: AVAudioRecorder?
+    @State private var audioPlayer: AVAudioPlayer?
+    @State private var audioPlayerDelegate = AudioPlayerDelegate()
+    @State private var playingRecordingURL: URL?
     @State private var statusMessage: String?
     @State private var recordingFiles: [RecordingFile] = []
 
@@ -59,13 +71,28 @@ struct ContentView: View {
                 Spacer()
             } else {
                 List(recordingFiles) { recordingFile in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(recordingFile.name)
-                            .font(.headline)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(recordingFile.name)
+                                .font(.headline)
 
-                        Text(recordingFile.createdAt.formatted(date: .numeric, time: .shortened))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            Text(recordingFile.createdAt.formatted(date: .numeric, time: .shortened))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+
+                            if playingRecordingURL == recordingFile.url {
+                                Text("再生中")
+                                    .font(.caption)
+                                    .foregroundStyle(.tint)
+                            }
+                        }
+
+                        Spacer()
+
+                        Button(playingRecordingURL == recordingFile.url ? "停止" : "再生") {
+                            togglePlayback(for: recordingFile)
+                        }
+                        .buttonStyle(.bordered)
                     }
                     .padding(.vertical, 4)
                 }
@@ -92,6 +119,8 @@ struct ContentView: View {
     }
 
     private func beginRecording() {
+        stopPlayback()
+
         let audioSession = AVAudioSession.sharedInstance()
 
         do {
@@ -153,8 +182,10 @@ struct ContentView: View {
                     }
 
                     return RecordingFile(
+                        id: fileURL,
                         name: fileURL.lastPathComponent,
-                        createdAt: createdAt
+                        createdAt: createdAt,
+                        url: fileURL
                     )
                 }
                 .sorted { $0.createdAt > $1.createdAt }
@@ -165,6 +196,42 @@ struct ContentView: View {
         } catch {
             statusMessage = "録音ファイルを読み込めませんでした"
         }
+    }
+
+    private func togglePlayback(for recordingFile: RecordingFile) {
+        if playingRecordingURL == recordingFile.url {
+            stopPlayback()
+        } else {
+            startPlayback(for: recordingFile)
+        }
+    }
+
+    private func startPlayback(for recordingFile: RecordingFile) {
+        do {
+            stopPlayback()
+
+            let player = try AVAudioPlayer(contentsOf: recordingFile.url)
+            audioPlayerDelegate.didFinishPlaying = {
+                DispatchQueue.main.async {
+                    audioPlayer = nil
+                    playingRecordingURL = nil
+                }
+            }
+            player.delegate = audioPlayerDelegate
+            player.play()
+
+            audioPlayer = player
+            playingRecordingURL = recordingFile.url
+            statusMessage = nil
+        } catch {
+            statusMessage = "音声を再生できませんでした"
+        }
+    }
+
+    private func stopPlayback() {
+        audioPlayer?.stop()
+        audioPlayer = nil
+        playingRecordingURL = nil
     }
 
     private func deleteOldRecordingFiles() {

@@ -35,10 +35,16 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
 
     private func startPlayback(for recordingFile: RecordingFile) throws {
         stopPlayback()
+
+        guard FileManager.default.fileExists(atPath: recordingFile.url.path) else {
+            throw AudioPlayerError.fileNotFound
+        }
+
         try configureAudioSessionForPlayback()
 
         let player = try AVAudioPlayer(contentsOf: recordingFile.url)
         player.delegate = self
+        player.prepareToPlay()
 
         guard player.play() else {
             throw AudioPlayerError.playFailed
@@ -54,9 +60,8 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
         try audioSession.setCategory(
             .playback,
             mode: .default,
-            options: [.defaultToSpeaker]
+            options: []
         )
-        try audioSession.overrideOutputAudioPort(.speaker)
         try audioSession.setActive(true)
     }
 
@@ -67,5 +72,6 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
 }
 
 enum AudioPlayerError: Error {
+    case fileNotFound
     case playFailed
 }

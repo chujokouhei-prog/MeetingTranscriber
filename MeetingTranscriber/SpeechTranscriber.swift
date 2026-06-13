@@ -13,6 +13,7 @@ final class SpeechTranscriber: ObservableObject {
     @Published private(set) var transcribingRecordingURL: URL?
 
     private var speechRecognitionTask: SFSpeechRecognitionTask?
+    private var didFinishCurrentTranscription = false
 
     func transcribe(
         recordingFile: RecordingFile,
@@ -20,6 +21,7 @@ final class SpeechTranscriber: ObservableObject {
         onCompletion: @escaping (SpeechTranscriberError?) -> Void
     ) {
         cancelTranscription()
+        didFinishCurrentTranscription = false
         transcribingRecordingURL = recordingFile.url
 
         SFSpeechRecognizer.requestAuthorization { [weak self] status in
@@ -52,6 +54,7 @@ final class SpeechTranscriber: ObservableObject {
         speechRecognitionTask?.cancel()
         speechRecognitionTask = nil
         transcribingRecordingURL = nil
+        didFinishCurrentTranscription = true
     }
 
     private func startSpeechRecognition(
@@ -69,18 +72,20 @@ final class SpeechTranscriber: ObservableObject {
             return
         }
 
-        guard speechRecognizer.supportsOnDeviceRecognition else {
-            finish(with: .onDeviceRecognitionUnavailable, onCompletion: onCompletion)
-            return
-        }
-
         let request = SFSpeechURLRecognitionRequest(url: recordingFile.url)
         request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = true
+
+        if speechRecognizer.supportsOnDeviceRecognition {
+            request.requiresOnDeviceRecognition = true
+        }
 
         speechRecognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
             DispatchQueue.main.async {
                 guard let self else {
+                    return
+                }
+
+                guard !self.didFinishCurrentTranscription else {
                     return
                 }
 
@@ -103,6 +108,11 @@ final class SpeechTranscriber: ObservableObject {
         with error: SpeechTranscriberError?,
         onCompletion: @escaping (SpeechTranscriberError?) -> Void
     ) {
+        guard !didFinishCurrentTranscription else {
+            return
+        }
+
+        didFinishCurrentTranscription = true
         speechRecognitionTask = nil
         transcribingRecordingURL = nil
         onCompletion(error)
@@ -116,6 +126,5 @@ enum SpeechTranscriberError: Error {
     case speechAuthorizationFailed
     case japaneseRecognizerUnavailable
     case recognizerUnavailable
-    case onDeviceRecognitionUnavailable
     case recognitionFailed
 }

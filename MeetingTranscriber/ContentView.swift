@@ -428,8 +428,6 @@ struct ContentView: View {
             return "日本語の音声認識を使用できません。端末の言語設定や音声認識の利用状況を確認してください。"
         case .recognizerUnavailable:
             return "現在、音声認識を使用できません。端末の状態を確認して、時間をおいて再試行してください。"
-        case .onDeviceRecognitionUnavailable:
-            return "この端末ではオフライン音声認識を使用できません。外部送信を避けるため、文字起こしは開始しませんでした。"
         case .recognitionFailed:
             return "文字起こしに失敗しました。録音の音量や周囲の雑音を確認して、もう一度お試しください。"
         }

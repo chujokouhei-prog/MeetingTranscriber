@@ -46,6 +46,10 @@ final class RecordingFileStore: ObservableObject {
             throw RecordingFileStoreError.emptyName
         }
 
+        guard FileManager.default.fileExists(atPath: recordingFile.url.path) else {
+            throw RecordingFileStoreError.fileNotFound
+        }
+
         let newURL = uniqueRecordingURL(
             baseFileName: sanitizedName,
             excluding: recordingFile.url
@@ -56,10 +60,18 @@ final class RecordingFileStore: ObservableObject {
         }
 
         try FileManager.default.moveItem(at: recordingFile.url, to: newURL)
+        try? FileManager.default.setAttributes(
+            [.creationDate: recordingFile.createdAt],
+            ofItemAtPath: newURL.path
+        )
 
         guard let newRecording = self.recordingFile(from: newURL) else {
             throw RecordingFileStoreError.renamedFileNotFound
         }
+
+        recordingFiles = recordingFiles
+            .map { $0.id == recordingFile.id ? newRecording : $0 }
+            .sorted { $0.createdAt > $1.createdAt }
 
         return RecordingRenameResult(
             oldRecording: recordingFile,
@@ -165,6 +177,7 @@ final class RecordingFileStore: ObservableObject {
 enum RecordingFileStoreError: LocalizedError {
     case emptyName
     case nameNotChanged
+    case fileNotFound
     case renamedFileNotFound
 
     var errorDescription: String? {
@@ -173,6 +186,8 @@ enum RecordingFileStoreError: LocalizedError {
             return "録音名を入力してください。"
         case .nameNotChanged:
             return "録音名は変更されていません"
+        case .fileNotFound:
+            return "録音ファイルが見つかりません。録音一覧を開き直してください。"
         case .renamedFileNotFound:
             return "名前変更後の録音ファイルを確認できませんでした。"
         }

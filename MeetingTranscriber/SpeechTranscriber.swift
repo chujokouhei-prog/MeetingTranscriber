@@ -279,10 +279,22 @@ final class SpeechTranscriber: ObservableObject {
 
                 if let error {
                     debugPrint("Speech recognition failed: \(error.localizedDescription)")
-                    let errorMessage = self.didReceiveFinalTranscription
-                        ? "一部の区間だけ文字起こしできました。詳細: \(error.localizedDescription)"
-                        : error.localizedDescription
-                    self.finish(with: .recognitionFailed(errorMessage), onCompletion: onCompletion)
+
+                    if self.isNoSpeechDetectedError(error) {
+                        self.collectedSegmentTexts[index] = ""
+                        self.speechRecognitionTask = nil
+                        self.recognizeSegment(
+                            at: index + 1,
+                            segmentURLs: segmentURLs,
+                            speechRecognizer: speechRecognizer,
+                            recordingFile: recordingFile,
+                            onResult: onResult,
+                            onCompletion: onCompletion
+                        )
+                        return
+                    }
+
+                    self.finish(with: .recognitionFailed(error.localizedDescription), onCompletion: onCompletion)
                 }
             }
         }
@@ -314,6 +326,16 @@ final class SpeechTranscriber: ObservableObject {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
+    }
+
+    private func isNoSpeechDetectedError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        let errorText = "\(nsError.localizedDescription) \(nsError.userInfo)"
+            .lowercased()
+
+        return errorText.contains("no speech")
+            || errorText.contains("speech not detected")
+            || errorText.contains("音声が検出")
     }
 
     private func finish(

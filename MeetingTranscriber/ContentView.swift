@@ -6,40 +6,16 @@
 //
 
 import SwiftUI
-import AVFoundation
-import Speech
-
-struct RecordingFile: Identifiable {
-    let id: URL
-    let name: String
-    let createdAt: Date
-    let url: URL
-}
-
-struct SavedTranscription: Codable {
-    let text: String
-    let createdAt: Date
-}
-
-final class AudioPlayerDelegate: NSObject, AVAudioPlayerDelegate {
-    var didFinishPlaying: (() -> Void)?
-
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        didFinishPlaying?()
-    }
-}
+import UIKit
 
 struct ContentView: View {
-    @State private var isRecording = false
-    @State private var audioRecorder: AVAudioRecorder?
-    @State private var audioPlayer: AVAudioPlayer?
-    @State private var audioPlayerDelegate = AudioPlayerDelegate()
-    @State private var playingRecordingURL: URL?
-    @State private var speechRecognitionTask: SFSpeechRecognitionTask?
-    @State private var transcribingRecordingURL: URL?
-    @State private var transcriptions: [String: SavedTranscription] = [:]
+    @StateObject private var recordingFileStore = RecordingFileStore()
+    @StateObject private var audioRecorder = AudioRecorderManager()
+    @StateObject private var audioPlayer = AudioPlayerManager()
+    @StateObject private var speechTranscriber = SpeechTranscriber()
+    @StateObject private var transcriptionStore = TranscriptionStore()
+
     @State private var statusMessage: String?
-    @State private var recordingFiles: [RecordingFile] = []
     @State private var isShowingConsentConfirmation = false
     @State private var isShowingRenameAlert = false
     @State private var recordingFileToRename: RecordingFile?
@@ -51,29 +27,29 @@ struct ContentView: View {
                 Section {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
-                            Label(isRecording ? "録音中" : "録音待機中", systemImage: isRecording ? "record.circle.fill" : "mic.circle")
+                            Label(audioRecorder.isRecording ? "録音中" : "録音待機中", systemImage: audioRecorder.isRecording ? "record.circle.fill" : "mic.circle")
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
-                                .foregroundStyle(isRecording ? .red : .secondary)
+                                .foregroundStyle(audioRecorder.isRecording ? .red : .secondary)
 
                             Spacer()
                         }
 
                         Button {
-                            if isRecording {
+                            if audioRecorder.isRecording {
                                 stopRecording()
                             } else {
                                 isShowingConsentConfirmation = true
                             }
                         } label: {
-                            Label(isRecording ? "録音停止" : "録音開始", systemImage: isRecording ? "stop.fill" : "mic.fill")
+                            Label(audioRecorder.isRecording ? "録音停止" : "録音開始", systemImage: audioRecorder.isRecording ? "stop.fill" : "mic.fill")
                                 .font(.title3)
                                 .fontWeight(.bold)
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 56)
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(isRecording ? .red : .accentColor)
+                        .tint(audioRecorder.isRecording ? .red : .accentColor)
 
                         if let statusMessage {
                             Text(statusMessage)
@@ -86,17 +62,17 @@ struct ContentView: View {
                 }
 
                 Section("録音一覧") {
-                    if recordingFiles.isEmpty {
+                    if recordingFileStore.recordingFiles.isEmpty {
                         Text("まだ録音はありません")
                             .font(.body)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.vertical, 32)
                     } else {
-                        ForEach(recordingFiles) { recordingFile in
+                        ForEach(recordingFileStore.recordingFiles) { recordingFile in
                             NavigationLink {
                                 recordingDetailView(
-                                    createdAt: recordingFile.createdAt,
+                                    recordingID: recordingFile.id,
                                     fallbackRecordingFile: recordingFile
                                 )
                             } label: {
@@ -109,8 +85,7 @@ struct ContentView: View {
             .navigationTitle("打ち合わせ文字起こし")
             .listStyle(.insetGrouped)
             .onAppear {
-                loadSavedTranscriptions()
-                loadRecordingFiles(clearStatus: true)
+                loadInitialData()
             }
             .sheet(isPresented: $isShowingConsentConfirmation) {
                 consentConfirmationView
@@ -134,7 +109,7 @@ struct ContentView: View {
 
     private func recordingRow(for recordingFile: RecordingFile) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(recordingTitle(for: recordingFile))
+            Text(recordingFile.title)
                 .font(.headline)
 
             Text(recordingFile.name)
@@ -142,15 +117,15 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {
-                if playingRecordingURL == recordingFile.url {
+                if audioPlayer.playingRecordingURL == recordingFile.url {
                     statusBadge("再生中", color: .blue)
                 }
 
-                if transcribingRecordingURL == recordingFile.url {
+                if speechTranscriber.transcribingRecordingURL == recordingFile.url {
                     statusBadge("文字起こし中", color: .orange)
                 }
 
-                if transcriptions[recordingFile.name] != nil {
+                if transcriptionStore.transcription(for: recordingFile) != nil {
                     statusBadge("文字起こし済み", color: .green)
                 }
             }
@@ -158,13 +133,13 @@ struct ContentView: View {
         .padding(.vertical, 6)
     }
 
-    private func recordingDetailView(createdAt: Date, fallbackRecordingFile: RecordingFile) -> some View {
-        let recordingFile = recordingFiles.first { $0.createdAt == createdAt } ?? fallbackRecordingFile
+    private func recordingDetailView(recordingID: String, fallbackRecordingFile: RecordingFile) -> some View {
+        let recordingFile = recordingFileStore.recordingFiles.first { $0.id == recordingID } ?? fallbackRecordingFile
 
-        List {
+        return List {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(recordingTitle(for: recordingFile))
+                    Text(recordingFile.title)
                         .font(.headline)
 
                     Text(recordingFile.name)
@@ -182,17 +157,17 @@ struct ContentView: View {
                 Button {
                     togglePlayback(for: recordingFile)
                 } label: {
-                    Label(playingRecordingURL == recordingFile.url ? "停止" : "再生", systemImage: playingRecordingURL == recordingFile.url ? "stop.fill" : "play.fill")
+                    Label(audioPlayer.playingRecordingURL == recordingFile.url ? "停止" : "再生", systemImage: audioPlayer.playingRecordingURL == recordingFile.url ? "stop.fill" : "play.fill")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 Button {
                     transcribe(recordingFile)
                 } label: {
-                    Label(transcribingRecordingURL == recordingFile.url ? "処理中" : "文字起こし", systemImage: "text.bubble")
+                    Label(speechTranscriber.transcribingRecordingURL == recordingFile.url ? "処理中" : "文字起こし", systemImage: "text.bubble")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .disabled(transcribingRecordingURL != nil)
+                .disabled(speechTranscriber.transcribingRecordingURL != nil)
 
                 Button {
                     showRenameAlert(for: recordingFile)
@@ -203,22 +178,22 @@ struct ContentView: View {
             }
 
             Section("状態") {
-                if playingRecordingURL == recordingFile.url {
+                if audioPlayer.playingRecordingURL == recordingFile.url {
                     statusBadge("再生中", color: .blue)
                 }
 
-                if transcribingRecordingURL == recordingFile.url {
+                if speechTranscriber.transcribingRecordingURL == recordingFile.url {
                     statusBadge("文字起こし中", color: .orange)
                 }
 
-                if playingRecordingURL != recordingFile.url && transcribingRecordingURL != recordingFile.url {
+                if audioPlayer.playingRecordingURL != recordingFile.url && speechTranscriber.transcribingRecordingURL != recordingFile.url {
                     Text("待機中")
                         .foregroundStyle(.secondary)
                 }
             }
 
             Section("文字起こし") {
-                if let transcription = transcriptions[recordingFile.name] {
+                if let transcription = transcriptionStore.transcription(for: recordingFile) {
                     transcriptionView(transcription)
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
                 } else {
@@ -318,98 +293,49 @@ struct ContentView: View {
         .padding(24)
     }
 
-    private func startRecording() {
-        AVAudioSession.sharedInstance().requestRecordPermission { granted in
-            DispatchQueue.main.async {
-                if granted {
-                    beginRecording()
-                } else {
-                    statusMessage = "マイクの使用が許可されていません。設定アプリでマイクの使用を許可してください。"
-                }
+    private func loadInitialData() {
+        transcriptionStore.loadSavedTranscriptions()
+        loadRecordingFiles(clearStatus: true)
+    }
+
+    private func loadRecordingFiles(clearStatus: Bool = false) {
+        do {
+            try recordingFileStore.loadRecordingFiles()
+            transcriptionStore.migrateFilenameKeysIfNeeded(recordingFiles: recordingFileStore.recordingFiles)
+            transcriptionStore.deleteOldTranscriptionResults(recordingFiles: recordingFileStore.recordingFiles)
+
+            if clearStatus {
+                statusMessage = nil
             }
+        } catch {
+            statusMessage = "録音ファイルを読み込めませんでした"
         }
     }
 
-    private func beginRecording() {
-        stopPlayback()
-        cancelTranscription()
+    private func startRecording() {
+        audioPlayer.stopPlayback()
+        speechTranscriber.cancelTranscription()
 
-        let audioSession = AVAudioSession.sharedInstance()
-
-        do {
-            try audioSession.setCategory(
-                .playAndRecord,
-                mode: .default,
-                options: [.defaultToSpeaker]
-            )
-            try audioSession.setActive(true)
-
-            let recorder = try AVAudioRecorder(url: newRecordingURL(), settings: [
-                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                AVSampleRateKey: 44_100,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-            ])
-
-            guard recorder.record() else {
-                audioRecorder = nil
-                isRecording = false
-                statusMessage = "録音を開始できませんでした。少し時間をおいて、もう一度お試しください。"
-                return
+        audioRecorder.startRecording(to: recordingFileStore.newRecordingURL()) { result in
+            switch result {
+            case .success:
+                statusMessage = "録音中です"
+            case .failure(.microphonePermissionDenied):
+                statusMessage = "マイクの使用が許可されていません。設定アプリでマイクの使用を許可してください。"
+            case .failure:
+                statusMessage = "録音を開始できませんでした。マイクの許可や端末の空き容量を確認してください。"
             }
-
-            audioRecorder = recorder
-            isRecording = true
-            statusMessage = "録音中です"
-        } catch {
-            debugPrint("Failed to start recording: \(error.localizedDescription)")
-            audioRecorder = nil
-            isRecording = false
-            statusMessage = "録音を開始できませんでした。マイクの許可や端末の空き容量を確認してください。"
         }
     }
 
     private func stopRecording() {
-        audioRecorder?.stop()
-        audioRecorder = nil
-        isRecording = false
+        let result = audioRecorder.stopRecording()
         statusMessage = "録音を保存しました"
         loadRecordingFiles()
 
-        do {
-            try AVAudioSession.sharedInstance().setActive(false)
-        } catch {
-            debugPrint("Failed to deactivate audio session: \(error.localizedDescription)")
+        if case .failure(.audioSessionDeactivationFailed) = result {
             statusMessage = "録音は保存されましたが、音声設定の終了に失敗しました。再度録音する前にアプリを開き直してください。"
         }
-    }
-
-    private func newRecordingURL() -> URL {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd_HH-mm"
-
-        let baseFileName = "meeting_\(formatter.string(from: Date()))"
-        return uniqueRecordingURL(baseFileName: baseFileName)
-    }
-
-    private func recordingTitle(for recordingFile: RecordingFile) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy年M月d日 H:mm"
-
-        return "\(formatter.string(from: recordingFile.createdAt)) の録音"
-    }
-
-    private func uniqueRecordingURL(baseFileName: String) -> URL {
-        let documentsFolder = documentsFolderURL()
-        var fileURL = documentsFolder.appendingPathComponent("\(baseFileName).m4a")
-        var number = 2
-
-        while FileManager.default.fileExists(atPath: fileURL.path) {
-            fileURL = documentsFolder.appendingPathComponent("\(baseFileName)_\(number).m4a")
-            number += 1
-        }
-
-        return fileURL
     }
 
     private func showRenameAlert(for recordingFile: RecordingFile) {
@@ -423,147 +349,29 @@ struct ContentView: View {
             return
         }
 
-        let sanitizedName = sanitizedRecordingName(from: newRecordingName)
-
-        guard !sanitizedName.isEmpty else {
-            statusMessage = "録音名を入力してください。"
-            return
-        }
-
-        stopPlayback()
-        cancelTranscription()
-
-        let newURL = uniqueRecordingURL(
-            baseFileName: sanitizedName,
-            excluding: recordingFile.url
-        )
-        let newFileName = newURL.lastPathComponent
-
-        if newURL == recordingFile.url {
-            recordingFileToRename = nil
-            newRecordingName = ""
-            statusMessage = "録音名は変更されていません"
-            return
-        }
+        audioPlayer.stopPlayback()
+        speechTranscriber.cancelTranscription()
 
         do {
-            try FileManager.default.moveItem(at: recordingFile.url, to: newURL)
-
-            if let transcription = transcriptions[recordingFile.name] {
-                transcriptions[recordingFile.name] = nil
-                transcriptions[newFileName] = transcription
-                saveTranscriptions()
-            }
+            let result = try recordingFileStore.rename(recordingFile, to: newRecordingName)
+            transcriptionStore.handleRename(result)
 
             recordingFileToRename = nil
             newRecordingName = ""
             statusMessage = "録音名を変更しました"
             loadRecordingFiles()
+        } catch let error as RecordingFileStoreError {
+            statusMessage = error.localizedDescription
         } catch {
             debugPrint("Failed to rename recording file: \(error.localizedDescription)")
             statusMessage = "録音名を変更できませんでした。もう一度お試しください。"
         }
     }
 
-    private func sanitizedRecordingName(from name: String) -> String {
-        var sanitizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if sanitizedName.lowercased().hasSuffix(".m4a") {
-            sanitizedName.removeLast(4)
-            sanitizedName = sanitizedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        let unsafeCharacters = CharacterSet(charactersIn: "/\\:*?\"<>|")
-            .union(.newlines)
-            .union(.controlCharacters)
-
-        return sanitizedName
-            .components(separatedBy: unsafeCharacters)
-            .filter { !$0.isEmpty }
-            .joined(separator: "_")
-    }
-
-    private func uniqueRecordingURL(baseFileName: String, excluding excludedURL: URL) -> URL {
-        let documentsFolder = documentsFolderURL()
-        var fileURL = documentsFolder.appendingPathComponent("\(baseFileName).m4a")
-        var number = 2
-
-        while FileManager.default.fileExists(atPath: fileURL.path) && fileURL != excludedURL {
-            fileURL = documentsFolder.appendingPathComponent("\(baseFileName)_\(number).m4a")
-            number += 1
-        }
-
-        return fileURL
-    }
-
-    private func loadRecordingFiles(clearStatus: Bool = false) {
-        do {
-            deleteOldRecordingFiles()
-
-            let fileURLs = try FileManager.default.contentsOfDirectory(
-                at: documentsFolderURL(),
-                includingPropertiesForKeys: [.creationDateKey],
-                options: [.skipsHiddenFiles]
-            )
-
-            recordingFiles = fileURLs
-                .filter { $0.pathExtension.lowercased() == "m4a" }
-                .compactMap { fileURL in
-                    let values = try? fileURL.resourceValues(forKeys: [.creationDateKey])
-
-                    guard let createdAt = values?.creationDate else {
-                        return nil
-                    }
-
-                    return RecordingFile(
-                        id: fileURL,
-                        name: fileURL.lastPathComponent,
-                        createdAt: createdAt,
-                        url: fileURL
-                    )
-                }
-                .sorted { $0.createdAt > $1.createdAt }
-
-            let recordingFileNames = Set(recordingFiles.map(\.name))
-            deleteOldTranscriptionResults(recordingFileNames: recordingFileNames)
-
-            if clearStatus {
-                statusMessage = nil
-            }
-        } catch {
-            statusMessage = "録音ファイルを読み込めませんでした"
-        }
-    }
-
     private func togglePlayback(for recordingFile: RecordingFile) {
-        if playingRecordingURL == recordingFile.url {
-            stopPlayback()
-        } else {
-            startPlayback(for: recordingFile)
-        }
-    }
-
-    private func startPlayback(for recordingFile: RecordingFile) {
         do {
-            stopPlayback()
-            try configureAudioSessionForPlayback()
-
-            let player = try AVAudioPlayer(contentsOf: recordingFile.url)
-            audioPlayerDelegate.didFinishPlaying = {
-                DispatchQueue.main.async {
-                    audioPlayer = nil
-                    playingRecordingURL = nil
-                }
-            }
-            player.delegate = audioPlayerDelegate
-
-            guard player.play() else {
-                statusMessage = "音声を再生できませんでした。録音ファイルが壊れている可能性があります。"
-                return
-            }
-
-            audioPlayer = player
-            playingRecordingURL = recordingFile.url
+            speechTranscriber.cancelTranscription()
+            try audioPlayer.togglePlayback(for: recordingFile)
             statusMessage = nil
         } catch {
             debugPrint("Failed to play audio: \(error.localizedDescription)")
@@ -571,22 +379,27 @@ struct ContentView: View {
         }
     }
 
-    private func configureAudioSessionForPlayback() throws {
-        let audioSession = AVAudioSession.sharedInstance()
+    private func transcribe(_ recordingFile: RecordingFile) {
+        audioPlayer.stopPlayback()
+        statusMessage = nil
 
-        try audioSession.setCategory(
-            .playback,
-            mode: .default,
-            options: [.defaultToSpeaker]
+        speechTranscriber.transcribe(
+            recordingFile: recordingFile,
+            onResult: { text, isFinal in
+                transcriptionStore.updateTranscription(text: text, for: recordingFile)
+
+                if isFinal {
+                    transcriptionStore.saveTranscriptions()
+                }
+            },
+            onCompletion: { error in
+                guard let error else {
+                    return
+                }
+
+                statusMessage = message(for: error)
+            }
         )
-        try audioSession.overrideOutputAudioPort(.speaker)
-        try audioSession.setActive(true)
-    }
-
-    private func stopPlayback() {
-        audioPlayer?.stop()
-        audioPlayer = nil
-        playingRecordingURL = nil
     }
 
     private func copyTranscriptionText(_ text: String) {
@@ -601,167 +414,24 @@ struct ContentView: View {
         statusMessage = "コピーしました"
     }
 
-    private func transcribe(_ recordingFile: RecordingFile) {
-        stopPlayback()
-        cancelTranscription()
-
-        transcribingRecordingURL = recordingFile.url
-        statusMessage = nil
-
-        SFSpeechRecognizer.requestAuthorization { status in
-            DispatchQueue.main.async {
-                switch status {
-                case .authorized:
-                    startSpeechRecognition(for: recordingFile)
-                case .denied:
-                    transcribingRecordingURL = nil
-                    statusMessage = "音声認識の使用が許可されていません。設定アプリで音声認識を許可してください。"
-                case .restricted:
-                    transcribingRecordingURL = nil
-                    statusMessage = "この端末では音声認識を使用できません。端末や利用制限の設定を確認してください。"
-                case .notDetermined:
-                    transcribingRecordingURL = nil
-                    statusMessage = "音声認識の許可を確認できませんでした。もう一度「文字起こし」を押してください。"
-                @unknown default:
-                    transcribingRecordingURL = nil
-                    statusMessage = "音声認識を開始できませんでした。しばらくしてからもう一度お試しください。"
-                }
-            }
+    private func message(for error: SpeechTranscriberError) -> String {
+        switch error {
+        case .speechPermissionDenied:
+            return "音声認識の使用が許可されていません。設定アプリで音声認識を許可してください。"
+        case .speechRestricted:
+            return "この端末では音声認識を使用できません。端末や利用制限の設定を確認してください。"
+        case .speechPermissionNotDetermined:
+            return "音声認識の許可を確認できませんでした。もう一度「文字起こし」を押してください。"
+        case .speechAuthorizationFailed:
+            return "音声認識を開始できませんでした。しばらくしてからもう一度お試しください。"
+        case .japaneseRecognizerUnavailable:
+            return "日本語の音声認識を使用できません。端末の言語設定や音声認識の利用状況を確認してください。"
+        case .recognizerUnavailable:
+            return "現在、音声認識を使用できません。端末の状態を確認して、時間をおいて再試行してください。"
+        case .onDeviceRecognitionUnavailable:
+            return "この端末ではオフライン音声認識を使用できません。外部送信を避けるため、文字起こしは開始しませんでした。"
+        case .recognitionFailed:
+            return "文字起こしに失敗しました。録音の音量や周囲の雑音を確認して、もう一度お試しください。"
         }
     }
-
-    private func startSpeechRecognition(for recordingFile: RecordingFile) {
-        guard let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "ja_JP")) else {
-            transcribingRecordingURL = nil
-            statusMessage = "日本語の音声認識を使用できません。端末の言語設定や音声認識の利用状況を確認してください。"
-            return
-        }
-
-        guard speechRecognizer.isAvailable else {
-            transcribingRecordingURL = nil
-            statusMessage = "現在、音声認識を使用できません。通信状態や端末の状態を確認して、時間をおいて再試行してください。"
-            return
-        }
-
-        let request = SFSpeechURLRecognitionRequest(url: recordingFile.url)
-        request.shouldReportPartialResults = true
-
-        speechRecognitionTask = speechRecognizer.recognitionTask(with: request) { result, error in
-            DispatchQueue.main.async {
-                if let result {
-                    transcriptions[recordingFile.name] = SavedTranscription(
-                        text: result.bestTranscription.formattedString,
-                        createdAt: Date()
-                    )
-
-                    if result.isFinal {
-                        saveTranscriptions()
-                        speechRecognitionTask = nil
-                        transcribingRecordingURL = nil
-                    }
-                }
-
-                if error != nil {
-                    speechRecognitionTask = nil
-                    transcribingRecordingURL = nil
-
-                    if transcriptions[recordingFile.name] == nil {
-                        statusMessage = "文字起こしに失敗しました。録音の音量や周囲の雑音を確認して、もう一度お試しください。"
-                    }
-                }
-            }
-        }
-    }
-
-    private func cancelTranscription() {
-        speechRecognitionTask?.cancel()
-        speechRecognitionTask = nil
-        transcribingRecordingURL = nil
-    }
-
-    private func loadSavedTranscriptions() {
-        guard let data = UserDefaults.standard.data(forKey: "savedTranscriptions") else {
-            return
-        }
-
-        do {
-            transcriptions = try JSONDecoder().decode([String: SavedTranscription].self, from: data)
-        } catch {
-            statusMessage = "保存済みの文字起こし結果を読み込めませんでした"
-        }
-    }
-
-    private func saveTranscriptions() {
-        do {
-            let data = try JSONEncoder().encode(transcriptions)
-            UserDefaults.standard.set(data, forKey: "savedTranscriptions")
-        } catch {
-            statusMessage = "文字起こし結果を保存できませんでした"
-        }
-    }
-
-    private func deleteOldTranscriptionResults(recordingFileNames: Set<String>) {
-        let now = Date()
-        let oneDay: TimeInterval = 24 * 60 * 60
-        var updatedTranscriptions = transcriptions
-
-        for (recordingFileName, transcription) in transcriptions {
-            let isRecordingFileDeleted = !recordingFileNames.contains(recordingFileName)
-            let isOlderThanOneDay = now.timeIntervalSince(transcription.createdAt) >= oneDay
-
-            if isRecordingFileDeleted || isOlderThanOneDay {
-                updatedTranscriptions[recordingFileName] = nil
-
-                if isRecordingFileDeleted {
-                    debugPrint("Deleted transcription because recording file is missing: \(recordingFileName)")
-                } else {
-                    debugPrint("Deleted old transcription: \(recordingFileName)")
-                }
-            }
-        }
-
-        if updatedTranscriptions.count != transcriptions.count {
-            transcriptions = updatedTranscriptions
-            saveTranscriptions()
-        }
-    }
-
-    private func deleteOldRecordingFiles() {
-        do {
-            let fileURLs = try FileManager.default.contentsOfDirectory(
-                at: documentsFolderURL(),
-                includingPropertiesForKeys: [.creationDateKey],
-                options: [.skipsHiddenFiles]
-            )
-
-            let now = Date()
-            let oneDay: TimeInterval = 24 * 60 * 60
-
-            for fileURL in fileURLs where fileURL.pathExtension.lowercased() == "m4a" {
-                let values = try fileURL.resourceValues(forKeys: [.creationDateKey])
-
-                guard let createdAt = values.creationDate else {
-                    continue
-                }
-
-                if now.timeIntervalSince(createdAt) >= oneDay {
-                    try FileManager.default.removeItem(at: fileURL)
-                    debugPrint("Deleted old recording file: \(fileURL.lastPathComponent)")
-                }
-            }
-        } catch {
-            debugPrint("Failed to delete old recording files: \(error.localizedDescription)")
-        }
-    }
-
-    private func documentsFolderURL() -> URL {
-        FileManager.default.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-        )[0]
-    }
-}
-
-#Preview {
-    ContentView()
 }

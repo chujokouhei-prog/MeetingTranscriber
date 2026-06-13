@@ -69,6 +69,10 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(audioRecorder.isRecording ? .red : .accentColor)
 
+                        if audioRecorder.isRecording {
+                            recordingLevelView
+                        }
+
                         if let statusMessage {
                             Text(statusMessage)
                                 .font(.footnote)
@@ -148,6 +152,28 @@ struct ContentView: View {
             } message: {
                 Text("録音ファイルと文字起こし結果が削除されます。この操作は取り消せません。")
             }
+        }
+    }
+
+    private var recordingLevelView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("入力レベル", systemImage: "waveform")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                if audioRecorder.audioLevel < 0.08 {
+                    Text("声が小さめです")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            ProgressView(value: audioRecorder.audioLevel)
+                .progressViewStyle(.linear)
+                .tint(audioRecorder.audioLevel < 0.08 ? .orange : .green)
         }
     }
 
@@ -878,6 +904,8 @@ struct ContentView: View {
             return "日本語の音声認識を使用できません。端末の言語設定や音声認識の利用状況を確認してください。"
         case .recognizerUnavailable:
             return "現在、音声認識を使用できません。端末の状態を確認して、時間をおいて再試行してください。"
+        case .audioSegmentPreparationFailed(let detail):
+            return "長時間の音声を文字起こし用に分割できませんでした。録音ファイルを再生できるか確認して、もう一度お試しください。詳細: \(detail)"
         case .noRecognizableSpeech:
             return "音声を認識できませんでした。録音の音量や周囲の雑音を確認して、もう一度お試しください。"
         case .recognitionFailed(let detail):

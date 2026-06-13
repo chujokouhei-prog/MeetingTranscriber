@@ -6,15 +6,28 @@
 //
 
 import Foundation
+import AVFoundation
 import Speech
 import Combine
 
 final class SpeechTranscriber: ObservableObject {
     @Published private(set) var transcribingRecordingURL: URL?
 
+    private let recognitionLocale = Locale(identifier: "ja_JP")
+    private let recognitionSegmentDuration: TimeInterval = 45
+    private let meetingContextualStrings = [
+        "打ち合わせ", "会議", "議事録", "確認事項", "決定事項", "宿題", "課題", "論点",
+        "スケジュール", "見積もり", "納期", "予算", "契約", "資料", "共有", "相談",
+        "次回", "担当", "対応", "検討", "確認", "お願いします", "ありがとうございます"
+    ]
+
     private var speechRecognitionTask: SFSpeechRecognitionTask?
+    private var audioExportSession: AVAssetExportSession?
+    private var temporarySegmentURLs: [URL] = []
+    private var collectedSegmentTexts: [String] = []
     private var didFinishCurrentTranscription = false
     private var didReceiveNonEmptyTranscription = false
+    private var didReceiveFinalTranscription = false
 
     func transcribe(
         recordingFile: RecordingFile,
@@ -24,6 +37,8 @@ final class SpeechTranscriber: ObservableObject {
         cancelTranscription()
         didFinishCurrentTranscription = false
         didReceiveNonEmptyTranscription = false
+        didReceiveFinalTranscription = false
+        collectedSegmentTexts = []
         transcribingRecordingURL = recordingFile.url
 
         guard FileManager.default.fileExists(atPath: recordingFile.url.path) else {
@@ -50,11 +65,19 @@ final class SpeechTranscriber: ObservableObject {
 
                 switch status {
                 case .authorized:
-                    self.startSpeechRecognition(
-                        for: recordingFile,
-                        onResult: onResult,
-                        onCompletion: onCompletion
-                    )
+                    self.prepareRecognitionSegments(for: recordingFile.url) { result in
+                        switch result {
+                        case .success(let segmentURLs):
+                            self.startSpeechRecognition(
+                                for: recordingFile,
+                                segmentURLs: segmentURLs,
+                                onResult: onResult,
+                                onCompletion: onCompletion
+                            )
+                        case .failure(let error):
+                            self.finish(with: error, onCompletion: onCompletion)
+                        }
+                    }
                 case .denied:
                     self.finish(with: .speechPermissionDenied, onCompletion: onCompletion)
                 case .restricted:
@@ -69,18 +92,114 @@ final class SpeechTranscriber: ObservableObject {
     }
 
     func cancelTranscription() {
+        audioExportSession?.cancelExport()
+        audioExportSession = nil
         speechRecognitionTask?.cancel()
         speechRecognitionTask = nil
         transcribingRecordingURL = nil
         didFinishCurrentTranscription = true
+        deleteTemporarySegments()
+    }
+
+    private func prepareRecognitionSegments(
+        for recordingURL: URL,
+        completion: @escaping (Result<[URL], SpeechTranscriberError>) -> Void
+    ) {
+        let asset = AVURLAsset(url: recordingURL)
+        let duration = CMTimeGetSeconds(asset.duration)
+
+        guard duration.isFinite, duration > recognitionSegmentDuration + 5 else {
+            completion(.success([recordingURL]))
+            return
+        }
+
+        exportSegment(
+            from: asset,
+            originalURL: recordingURL,
+            startTime: 0,
+            index: 0,
+            segmentURLs: [],
+            completion: completion
+        )
+    }
+
+    private func exportSegment(
+        from asset: AVURLAsset,
+        originalURL: URL,
+        startTime: TimeInterval,
+        index: Int,
+        segmentURLs: [URL],
+        completion: @escaping (Result<[URL], SpeechTranscriberError>) -> Void
+    ) {
+        guard !didFinishCurrentTranscription else {
+            return
+        }
+
+        let assetDuration = CMTimeGetSeconds(asset.duration)
+        guard startTime < assetDuration else {
+            temporarySegmentURLs = segmentURLs
+            completion(.success(segmentURLs.isEmpty ? [originalURL] : segmentURLs))
+            return
+        }
+
+        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+            completion(.failure(.audioSegmentPreparationFailed("音声を分割する準備ができませんでした。")))
+            return
+        }
+
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingTranscriber-\(UUID().uuidString)-\(index).m4a")
+        let segmentDuration = min(recognitionSegmentDuration, assetDuration - startTime)
+        exportSession.outputURL = outputURL
+        exportSession.outputFileType = .m4a
+        exportSession.timeRange = CMTimeRange(
+            start: CMTime(seconds: startTime, preferredTimescale: 600),
+            duration: CMTime(seconds: segmentDuration, preferredTimescale: 600)
+        )
+        audioExportSession = exportSession
+
+        exportSession.exportAsynchronously { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, !self.didFinishCurrentTranscription else {
+                    return
+                }
+
+                self.audioExportSession = nil
+
+                switch exportSession.status {
+                case .completed:
+                    var updatedSegmentURLs = segmentURLs
+                    updatedSegmentURLs.append(outputURL)
+                    self.exportSegment(
+                        from: asset,
+                        originalURL: originalURL,
+                        startTime: startTime + self.recognitionSegmentDuration,
+                        index: index + 1,
+                        segmentURLs: updatedSegmentURLs,
+                        completion: completion
+                    )
+                case .failed:
+                    let detail = exportSession.error?.localizedDescription ?? "不明なエラー"
+                    self.deleteTemporarySegments(segmentURLs + [outputURL])
+                    completion(.failure(.audioSegmentPreparationFailed(detail)))
+                case .cancelled:
+                    self.deleteTemporarySegments(segmentURLs + [outputURL])
+                    completion(.failure(.audioSegmentPreparationFailed("音声分割がキャンセルされました。")))
+                default:
+                    self.deleteTemporarySegments(segmentURLs + [outputURL])
+                    completion(.failure(.audioSegmentPreparationFailed("音声分割を完了できませんでした。")))
+                }
+            }
+        }
     }
 
     private func startSpeechRecognition(
         for recordingFile: RecordingFile,
+        segmentURLs: [URL],
         onResult: @escaping (String, Bool) -> Void,
         onCompletion: @escaping (SpeechTranscriberError?) -> Void
     ) {
-        guard let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "ja_JP")) else {
+        guard let speechRecognizer = SFSpeechRecognizer(locale: recognitionLocale) else {
             finish(with: .japaneseRecognizerUnavailable, onCompletion: onCompletion)
             return
         }
@@ -90,47 +209,111 @@ final class SpeechTranscriber: ObservableObject {
             return
         }
 
-        let request = SFSpeechURLRecognitionRequest(url: recordingFile.url)
-        request.shouldReportPartialResults = true
-        request.taskHint = .dictation
+        collectedSegmentTexts = Array(repeating: "", count: segmentURLs.count)
+        recognizeSegment(
+            at: 0,
+            segmentURLs: segmentURLs,
+            speechRecognizer: speechRecognizer,
+            recordingFile: recordingFile,
+            onResult: onResult,
+            onCompletion: onCompletion
+        )
+    }
+
+    private func recognizeSegment(
+        at index: Int,
+        segmentURLs: [URL],
+        speechRecognizer: SFSpeechRecognizer,
+        recordingFile: RecordingFile,
+        onResult: @escaping (String, Bool) -> Void,
+        onCompletion: @escaping (SpeechTranscriberError?) -> Void
+    ) {
+        guard !didFinishCurrentTranscription else {
+            return
+        }
+
+        guard index < segmentURLs.count else {
+            finish(
+                with: didReceiveNonEmptyTranscription ? nil : .noRecognizableSpeech,
+                onCompletion: onCompletion
+            )
+            return
+        }
+
+        let request = makeRecognitionRequest(for: segmentURLs[index], recordingFile: recordingFile)
 
         speechRecognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
             DispatchQueue.main.async {
-                guard let self else {
-                    return
-                }
-
-                guard !self.didFinishCurrentTranscription else {
+                guard let self, !self.didFinishCurrentTranscription else {
                     return
                 }
 
                 if let result {
                     let transcriptionText = result.bestTranscription.formattedString
-                    let hasText = !transcriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let trimmedText = transcriptionText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-                    if hasText {
+                    if !trimmedText.isEmpty {
                         self.didReceiveNonEmptyTranscription = true
-                        onResult(transcriptionText, result.isFinal)
+                        let combinedText = self.combinedTranscription(
+                            replacingSegmentAt: index,
+                            with: trimmedText
+                        )
+                        onResult(combinedText, result.isFinal && index == segmentURLs.count - 1)
                     }
 
                     if result.isFinal {
-                        self.finish(
-                            with: self.didReceiveNonEmptyTranscription ? nil : .noRecognizableSpeech,
+                        self.didReceiveFinalTranscription = true
+                        self.collectedSegmentTexts[index] = trimmedText
+                        self.speechRecognitionTask = nil
+                        self.recognizeSegment(
+                            at: index + 1,
+                            segmentURLs: segmentURLs,
+                            speechRecognizer: speechRecognizer,
+                            recordingFile: recordingFile,
+                            onResult: onResult,
                             onCompletion: onCompletion
                         )
+                        return
                     }
                 }
 
                 if let error {
                     debugPrint("Speech recognition failed: \(error.localizedDescription)")
-
-                    self.finish(
-                        with: self.didReceiveNonEmptyTranscription ? nil : .recognitionFailed(error.localizedDescription),
-                        onCompletion: onCompletion
-                    )
+                    let errorMessage = self.didReceiveFinalTranscription
+                        ? "一部の区間だけ文字起こしできました。詳細: \(error.localizedDescription)"
+                        : error.localizedDescription
+                    self.finish(with: .recognitionFailed(errorMessage), onCompletion: onCompletion)
                 }
             }
         }
+    }
+
+    private func makeRecognitionRequest(
+        for segmentURL: URL,
+        recordingFile: RecordingFile
+    ) -> SFSpeechURLRecognitionRequest {
+        let request = SFSpeechURLRecognitionRequest(url: segmentURL)
+        request.shouldReportPartialResults = true
+        request.taskHint = .dictation
+        request.contextualStrings = meetingContextualStrings
+        request.interactionIdentifier = recordingFile.id
+        if #available(iOS 16, *) {
+            request.addsPunctuation = true
+        }
+
+        return request
+    }
+
+    private func combinedTranscription(replacingSegmentAt index: Int, with text: String) -> String {
+        var segmentTexts = collectedSegmentTexts
+        if segmentTexts.indices.contains(index) {
+            segmentTexts[index] = text
+        }
+
+        return segmentTexts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
     }
 
     private func finish(
@@ -142,12 +325,27 @@ final class SpeechTranscriber: ObservableObject {
         }
 
         didFinishCurrentTranscription = true
+        audioExportSession?.cancelExport()
+        audioExportSession = nil
         speechRecognitionTask = nil
         transcribingRecordingURL = nil
+        deleteTemporarySegments()
         if let error {
             debugPrint("Finished transcription with error: \(error.logDescription)")
         }
         onCompletion(error)
+    }
+
+    private func deleteTemporarySegments(_ segmentURLs: [URL]? = nil) {
+        let urls = segmentURLs ?? temporarySegmentURLs
+
+        for url in urls where url.path.hasPrefix(FileManager.default.temporaryDirectory.path) {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        if segmentURLs == nil {
+            temporarySegmentURLs = []
+        }
     }
 }
 
@@ -161,6 +359,7 @@ enum SpeechTranscriberError: Error {
     case speechAuthorizationFailed
     case japaneseRecognizerUnavailable
     case recognizerUnavailable
+    case audioSegmentPreparationFailed(String)
     case noRecognizableSpeech
     case recognitionFailed(String)
 
@@ -184,6 +383,8 @@ enum SpeechTranscriberError: Error {
             return "Japanese speech recognizer is unavailable."
         case .recognizerUnavailable:
             return "Speech recognizer is currently unavailable."
+        case .audioSegmentPreparationFailed(let detail):
+            return "Audio could not be split for recognition: \(detail)"
         case .noRecognizableSpeech:
             return "No recognizable speech was found."
         case .recognitionFailed(let detail):

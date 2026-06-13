@@ -10,9 +10,11 @@ import Combine
 
 final class AudioRecorderManager: ObservableObject {
     @Published private(set) var isRecording = false
+    @Published private(set) var audioLevel = 0.0
 
     private var audioRecorder: AVAudioRecorder?
     private var activeRecordingURL: URL?
+    private var audioLevelTimer: Timer?
 
     func startRecording(to fileURL: URL, completion: @escaping (Result<Void, AudioRecorderError>) -> Void) {
         AVAudioApplication.requestRecordPermission { [weak self] granted in
@@ -38,10 +40,12 @@ final class AudioRecorderManager: ObservableObject {
     }
 
     func stopRecording() -> Result<Void, AudioRecorderError> {
+        stopAudioLevelMetering()
         audioRecorder?.stop()
         audioRecorder = nil
         activeRecordingURL = nil
         isRecording = false
+        audioLevel = 0
 
         do {
             try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -55,19 +59,22 @@ final class AudioRecorderManager: ObservableObject {
     private func beginRecording(to fileURL: URL) throws {
         let audioSession = AVAudioSession.sharedInstance()
 
+        try audioSession.setPreferredSampleRate(48_000)
         try audioSession.setCategory(
-            .playAndRecord,
-            mode: .default,
-            options: [.allowBluetoothHFP, .defaultToSpeaker]
+            .record,
+            mode: .measurement,
+            options: []
         )
         try audioSession.setActive(true)
 
         let recorder = try AVAudioRecorder(url: fileURL, settings: [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 44_100,
+            AVSampleRateKey: 48_000,
             AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 128_000,
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ])
+        recorder.isMeteringEnabled = true
 
         guard recorder.record() else {
             audioRecorder = nil
@@ -79,7 +86,28 @@ final class AudioRecorderManager: ObservableObject {
         audioRecorder = recorder
         activeRecordingURL = fileURL
         isRecording = true
+        startAudioLevelMetering()
         debugPrint("Started recording: \(fileURL.lastPathComponent)")
+    }
+
+    private func startAudioLevelMetering() {
+        stopAudioLevelMetering()
+
+        audioLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            guard let self, let audioRecorder = self.audioRecorder else {
+                return
+            }
+
+            audioRecorder.updateMeters()
+            let averagePower = audioRecorder.averagePower(forChannel: 0)
+            let normalizedLevel = max(0, min(1, (Double(averagePower) + 60) / 60))
+            self.audioLevel = normalizedLevel
+        }
+    }
+
+    private func stopAudioLevelMetering() {
+        audioLevelTimer?.invalidate()
+        audioLevelTimer = nil
     }
 }
 

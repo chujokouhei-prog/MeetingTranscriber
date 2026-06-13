@@ -144,10 +144,21 @@ struct ContentView: View {
 
                             if let transcription = transcriptions[recordingFile.name] {
                                 VStack(alignment: .leading, spacing: 8) {
-                                    Text("文字起こし結果")
+                                    HStack {
+                                        Text("文字起こし結果")
+                                            .font(.caption)
+                                            .fontWeight(.bold)
+                                            .foregroundStyle(.secondary)
+
+                                        Spacer()
+
+                                        Button("コピー") {
+                                            copyTranscriptionText(transcription.text)
+                                        }
                                         .font(.caption)
-                                        .fontWeight(.bold)
-                                        .foregroundStyle(.secondary)
+                                        .buttonStyle(.bordered)
+                                        .disabled(transcription.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                    }
 
                                     Text(transcription.text)
                                         .font(.body)
@@ -484,6 +495,18 @@ struct ContentView: View {
         audioPlayer?.stop()
         audioPlayer = nil
         playingRecordingURL = nil
+    }
+
+    private func copyTranscriptionText(_ text: String) {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedText.isEmpty else {
+            statusMessage = "コピーできる文字起こし結果がありません。"
+            return
+        }
+
+        UIPasteboard.general.string = trimmedText
+        statusMessage = "コピーしました"
     }
 
     private func transcribe(_ recordingFile: RecordingFile) {

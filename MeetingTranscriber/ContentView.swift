@@ -44,7 +44,14 @@ struct ContentView: View {
                                 isShowingConsentConfirmation = true
                             }
                         } label: {
-                            Label(audioRecorder.isRecording ? "録音停止" : "録音開始", systemImage: audioRecorder.isRecording ? "stop.fill" : "mic.fill")
+                            HStack(spacing: 8) {
+                                Image(systemName: audioRecorder.isRecording ? "stop.fill" : "mic.fill")
+
+                                Text(audioRecorder.isRecording ? "録音停止" : "録音開始")
+
+                                Image(systemName: audioRecorder.isRecording ? "stop.fill" : "mic.fill")
+                                    .opacity(0)
+                            }
                                 .font(.title3)
                                 .fontWeight(.bold)
                                 .frame(maxWidth: .infinity)

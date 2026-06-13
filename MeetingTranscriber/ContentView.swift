@@ -173,7 +173,7 @@ struct ContentView: View {
                 if granted {
                     beginRecording()
                 } else {
-                    statusMessage = "マイクの使用が許可されていません"
+                    statusMessage = "マイクの使用が許可されていません。設定アプリでマイクの使用を許可してください。"
                 }
             }
         }
@@ -196,12 +196,21 @@ struct ContentView: View {
                 AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
             ])
 
-            recorder.record()
+            guard recorder.record() else {
+                audioRecorder = nil
+                isRecording = false
+                statusMessage = "録音を開始できませんでした。少し時間をおいて、もう一度お試しください。"
+                return
+            }
+
             audioRecorder = recorder
             isRecording = true
             statusMessage = "録音中です"
         } catch {
-            statusMessage = "録音を開始できませんでした"
+            debugPrint("Failed to start recording: \(error.localizedDescription)")
+            audioRecorder = nil
+            isRecording = false
+            statusMessage = "録音を開始できませんでした。マイクの許可や端末の空き容量を確認してください。"
         }
     }
 
@@ -215,7 +224,8 @@ struct ContentView: View {
         do {
             try AVAudioSession.sharedInstance().setActive(false)
         } catch {
-            statusMessage = "録音は停止しましたが、音声設定の終了に失敗しました"
+            debugPrint("Failed to deactivate audio session: \(error.localizedDescription)")
+            statusMessage = "録音は保存されましたが、音声設定の終了に失敗しました。再度録音する前にアプリを開き直してください。"
         }
     }
 
@@ -283,13 +293,18 @@ struct ContentView: View {
                 }
             }
             player.delegate = audioPlayerDelegate
-            player.play()
+
+            guard player.play() else {
+                statusMessage = "音声を再生できませんでした。録音ファイルが壊れている可能性があります。"
+                return
+            }
 
             audioPlayer = player
             playingRecordingURL = recordingFile.url
             statusMessage = nil
         } catch {
-            statusMessage = "音声を再生できませんでした"
+            debugPrint("Failed to play audio: \(error.localizedDescription)")
+            statusMessage = "音声を再生できませんでした。録音ファイルが見つからないか、読み込めない可能性があります。"
         }
     }
 
@@ -313,16 +328,16 @@ struct ContentView: View {
                     startSpeechRecognition(for: recordingFile)
                 case .denied:
                     transcribingRecordingURL = nil
-                    statusMessage = "音声認識の使用が許可されていません"
+                    statusMessage = "音声認識の使用が許可されていません。設定アプリで音声認識を許可してください。"
                 case .restricted:
                     transcribingRecordingURL = nil
-                    statusMessage = "この端末では音声認識を使用できません"
+                    statusMessage = "この端末では音声認識を使用できません。端末や利用制限の設定を確認してください。"
                 case .notDetermined:
                     transcribingRecordingURL = nil
-                    statusMessage = "音声認識の許可を確認できませんでした"
+                    statusMessage = "音声認識の許可を確認できませんでした。もう一度「文字起こし」を押してください。"
                 @unknown default:
                     transcribingRecordingURL = nil
-                    statusMessage = "音声認識を開始できませんでした"
+                    statusMessage = "音声認識を開始できませんでした。しばらくしてからもう一度お試しください。"
                 }
             }
         }
@@ -331,13 +346,13 @@ struct ContentView: View {
     private func startSpeechRecognition(for recordingFile: RecordingFile) {
         guard let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "ja_JP")) else {
             transcribingRecordingURL = nil
-            statusMessage = "日本語の音声認識を使用できません"
+            statusMessage = "日本語の音声認識を使用できません。端末の言語設定や音声認識の利用状況を確認してください。"
             return
         }
 
         guard speechRecognizer.isAvailable else {
             transcribingRecordingURL = nil
-            statusMessage = "現在、音声認識を使用できません"
+            statusMessage = "現在、音声認識を使用できません。通信状態や端末の状態を確認して、時間をおいて再試行してください。"
             return
         }
 
@@ -364,7 +379,7 @@ struct ContentView: View {
                     transcribingRecordingURL = nil
 
                     if transcriptions[recordingFile.name] == nil {
-                        statusMessage = "文字起こしに失敗しました"
+                        statusMessage = "文字起こしに失敗しました。録音の音量や周囲の雑音を確認して、もう一度お試しください。"
                     }
                 }
             }

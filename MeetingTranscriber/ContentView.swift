@@ -290,15 +290,18 @@ struct ContentView: View {
 
     private var consentConfirmationView: some View {
         VStack(alignment: .leading, spacing: 24) {
-            Text("録音前の確認")
+            Text("録音への同意")
                 .font(.title)
                 .fontWeight(.bold)
 
             VStack(alignment: .leading, spacing: 16) {
+                Text("内容をご確認のうえ、同意いただける場合は下のボタンを押してください。")
+                    .foregroundStyle(.secondary)
+
                 Label("この打ち合わせの音声を録音します", systemImage: "mic.fill")
                 Label("録音した音声は文字起こしに使用します", systemImage: "text.bubble.fill")
+                Label("録音データと文字起こし結果はこの端末に保存されます", systemImage: "lock.fill")
                 Label("保存されたデータは一定時間後に削除されます", systemImage: "clock.fill")
-                Label("相手の同意を得たうえで録音を開始してください", systemImage: "person.fill.checkmark")
             }
             .font(.body)
 
@@ -308,7 +311,7 @@ struct ContentView: View {
                 isShowingConsentConfirmation = false
                 startRecording()
             } label: {
-                Text("同意を得たので録音開始")
+                Text("同意して録音を開始する")
                     .fontWeight(.bold)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
@@ -318,7 +321,7 @@ struct ContentView: View {
             Button {
                 isShowingConsentConfirmation = false
             } label: {
-                Text("キャンセル")
+                Text("同意しない")
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
             }

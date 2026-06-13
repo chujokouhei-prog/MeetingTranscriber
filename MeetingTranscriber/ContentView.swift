@@ -147,7 +147,7 @@ struct ContentView: View {
             Text(recordingFile.title)
                 .font(.headline)
 
-            Text(recordingFile.name)
+            Text(recordingFile.createdAt.formatted(date: .numeric, time: .shortened))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -177,10 +177,6 @@ struct ContentView: View {
                     Text(recordingFile.title)
                         .font(.headline)
 
-                    Text(recordingFile.name)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
                     Text("作成日時: \(recordingFile.createdAt.formatted(date: .numeric, time: .shortened))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -203,13 +199,6 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .disabled(speechTranscriber.transcribingRecordingURL != nil)
-
-                Button {
-                    showRenameAlert(for: recordingFile)
-                } label: {
-                    Label("名前変更", systemImage: "pencil")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
             }
 
             Section("状態") {
@@ -378,7 +367,7 @@ struct ContentView: View {
 
     private func showRenameAlert(for recordingFile: RecordingFile) {
         recordingFileToRename = recordingFile
-        newRecordingName = recordingFile.url.deletingPathExtension().lastPathComponent
+        newRecordingName = recordingFile.title
         isShowingRenameAlert = true
     }
 

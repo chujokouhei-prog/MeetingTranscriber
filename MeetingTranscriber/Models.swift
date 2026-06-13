@@ -14,10 +14,21 @@ struct RecordingFile: Identifiable, Equatable {
     let url: URL
 
     var title: String {
+        let fileName = url.deletingPathExtension().lastPathComponent
+
+        if !isDefaultRecordingFileName(fileName) {
+            return fileName
+        }
+
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy年M月d日 H:mm"
 
         return "\(formatter.string(from: createdAt)) の録音"
+    }
+
+    private func isDefaultRecordingFileName(_ fileName: String) -> Bool {
+        let pattern = #"^meeting_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}(?:_\d+)?$"#
+        return fileName.range(of: pattern, options: .regularExpression) != nil
     }
 }
 
@@ -25,4 +36,3 @@ struct SavedTranscription: Codable {
     let text: String
     let createdAt: Date
 }
-

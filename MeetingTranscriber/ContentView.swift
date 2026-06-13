@@ -292,60 +292,20 @@ struct ContentView: View {
 
     private func playbackControlView(for recordingFile: RecordingFile) -> some View {
         let isCurrentRecording = audioPlayer.activeRecordingURL == recordingFile.url
+        let isLoadedRecording = audioPlayer.loadedRecordingURL == recordingFile.url
         let isLoading = isCurrentRecording && audioPlayer.playbackState == .loading
         let isPlaying = isCurrentRecording && audioPlayer.playbackState == .playing
-        let currentTime = isCurrentRecording ? audioPlayer.currentTime : 0
-        let duration = audioPlayer.loadedRecordingURL == recordingFile.url ? audioPlayer.duration : 0
+        let currentTime = isLoadedRecording ? audioPlayer.currentTime : 0
+        let duration = isLoadedRecording ? audioPlayer.duration : 0
         let sliderUpperBound = max(duration, 1)
+        let displayedTime = playbackSeekTime ?? currentTime
+        let canSeek = duration > 0 && !isLoading
 
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                Button {
-                    togglePlayback(for: recordingFile)
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(Color.accentColor)
-                            .frame(width: 44, height: 44)
-
-                        if isLoading {
-                            ProgressView()
-                                .tint(.white)
-                        } else {
-                            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                                .font(.headline)
-                                .foregroundStyle(.white)
-                                .padding(.leading, isPlaying ? 0 : 3)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(isLoading)
-                .accessibilityLabel(isPlaying ? "一時停止" : "再生")
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "waveform")
-                            .foregroundStyle(.secondary)
-
-                        Text(playbackStatusText(for: recordingFile))
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                    }
-
-                    Text("\(formattedPlaybackTime(currentTime)) / \(formattedPlaybackTime(duration))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-
-                Spacer()
-            }
-
+        return VStack(spacing: 16) {
             Slider(
                 value: Binding(
                     get: {
-                        playbackSeekTime ?? currentTime
+                        displayedTime
                     },
                     set: { newValue in
                         playbackSeekTime = newValue
@@ -354,15 +314,15 @@ struct ContentView: View {
                 in: 0...sliderUpperBound,
                 onEditingChanged: { isEditing in
                     if !isEditing {
-                        audioPlayer.seek(to: playbackSeekTime ?? currentTime)
+                        audioPlayer.seek(to: displayedTime)
                         playbackSeekTime = nil
                     }
                 }
             )
-            .disabled(duration <= 0 || isLoading)
+            .disabled(!canSeek)
 
             HStack {
-                Text(formattedPlaybackTime(playbackSeekTime ?? currentTime))
+                Text(formattedPlaybackTime(displayedTime))
 
                 Spacer()
 
@@ -371,6 +331,63 @@ struct ContentView: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
             .monospacedDigit()
+
+            HStack(spacing: 34) {
+                Button {
+                    skipPlayback(for: recordingFile, by: -15)
+                } label: {
+                    Image(systemName: "gobackward.15")
+                        .font(.system(size: 28, weight: .medium))
+                        .frame(width: 56, height: 56)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(canSeek ? Color.primary : Color.secondary)
+                .disabled(!canSeek)
+                .accessibilityLabel("15秒戻る")
+
+                Button {
+                    togglePlayback(for: recordingFile)
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(Color.accentColor)
+                            .frame(width: 72, height: 72)
+
+                        if isLoading {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 30, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.leading, isPlaying ? 0 : 5)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isLoading)
+                .accessibilityLabel(isPlaying ? "一時停止" : "再生")
+
+                Button {
+                    skipPlayback(for: recordingFile, by: 15)
+                } label: {
+                    Image(systemName: "goforward.15")
+                        .font(.system(size: 28, weight: .medium))
+                        .frame(width: 56, height: 56)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(canSeek ? Color.primary : Color.secondary)
+                .disabled(!canSeek)
+                .accessibilityLabel("15秒進む")
+            }
+            .frame(maxWidth: .infinity)
+
+            Label(playbackStatusText(for: recordingFile), systemImage: "waveform")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
         }
     }
 
@@ -707,6 +724,16 @@ struct ContentView: View {
             debugPrint("Failed to play audio: \(error.localizedDescription)")
             statusMessage = "音声を再生できませんでした。録音ファイルが見つからないか、読み込めない可能性があります。"
         }
+    }
+
+    private func skipPlayback(for recordingFile: RecordingFile, by interval: TimeInterval) {
+        guard audioPlayer.loadedRecordingURL == recordingFile.url,
+              audioPlayer.duration > 0 else {
+            return
+        }
+
+        audioPlayer.seek(to: audioPlayer.currentTime + interval)
+        playbackSeekTime = nil
     }
 
     private func transcribe(_ recordingFile: RecordingFile) {

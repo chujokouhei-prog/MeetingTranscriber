@@ -129,24 +129,16 @@ struct ContentView: View {
     }
 
     private func newRecordingURL() -> URL {
-        let documentsFolder = FileManager.default.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-        )[0]
-
         let fileName = "recording-\(Int(Date().timeIntervalSince1970)).m4a"
-        return documentsFolder.appendingPathComponent(fileName)
+        return documentsFolderURL().appendingPathComponent(fileName)
     }
 
     private func loadRecordingFiles(clearStatus: Bool = false) {
         do {
-            let documentsFolder = FileManager.default.urls(
-                for: .documentDirectory,
-                in: .userDomainMask
-            )[0]
+            deleteOldRecordingFiles()
 
             let fileURLs = try FileManager.default.contentsOfDirectory(
-                at: documentsFolder,
+                at: documentsFolderURL(),
                 includingPropertiesForKeys: [.creationDateKey],
                 options: [.skipsHiddenFiles]
             )
@@ -173,6 +165,41 @@ struct ContentView: View {
         } catch {
             statusMessage = "録音ファイルを読み込めませんでした"
         }
+    }
+
+    private func deleteOldRecordingFiles() {
+        do {
+            let fileURLs = try FileManager.default.contentsOfDirectory(
+                at: documentsFolderURL(),
+                includingPropertiesForKeys: [.creationDateKey],
+                options: [.skipsHiddenFiles]
+            )
+
+            let now = Date()
+            let oneDay: TimeInterval = 24 * 60 * 60
+
+            for fileURL in fileURLs where fileURL.pathExtension.lowercased() == "m4a" {
+                let values = try fileURL.resourceValues(forKeys: [.creationDateKey])
+
+                guard let createdAt = values.creationDate else {
+                    continue
+                }
+
+                if now.timeIntervalSince(createdAt) >= oneDay {
+                    try FileManager.default.removeItem(at: fileURL)
+                    debugPrint("Deleted old recording file: \(fileURL.lastPathComponent)")
+                }
+            }
+        } catch {
+            debugPrint("Failed to delete old recording files: \(error.localizedDescription)")
+        }
+    }
+
+    private func documentsFolderURL() -> URL {
+        FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        )[0]
     }
 }
 

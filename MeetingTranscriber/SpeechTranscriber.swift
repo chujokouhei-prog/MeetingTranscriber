@@ -24,6 +24,7 @@ final class SpeechTranscriber: ObservableObject {
     private var speechRecognitionTask: SFSpeechRecognitionTask?
     private var audioExportSession: AVAssetExportSession?
     private var modernRecognitionTask: Task<Void, Never>?
+    private var temporaryPreprocessedURL: URL?
     private var temporarySegmentURLs: [URL] = []
     private var collectedSegmentTexts: [String] = []
     private var didFinishCurrentTranscription = false
@@ -66,16 +67,26 @@ final class SpeechTranscriber: ObservableObject {
 
                 switch status {
                 case .authorized:
+                    let recognitionAudioURL: URL
+                    do {
+                        recognitionAudioURL = try self.preprocessedRecognitionAudioURL(for: recordingFile.url)
+                    } catch {
+                        debugPrint("Audio preprocessing failed: \(error.localizedDescription)")
+                        self.finish(with: .audioPreprocessingFailed(error.localizedDescription), onCompletion: onCompletion)
+                        return
+                    }
+
                     if #available(iOS 26.0, *) {
                         self.startModernDictationRecognition(
                             for: recordingFile,
+                            recognitionAudioURL: recognitionAudioURL,
                             onResult: onResult,
                             onCompletion: onCompletion
                         )
                         return
                     }
 
-                    self.prepareRecognitionSegments(for: recordingFile.url) { result in
+                    self.prepareRecognitionSegments(for: recognitionAudioURL) { result in
                         switch result {
                         case .success(let segmentURLs):
                             self.startSpeechRecognition(
@@ -110,12 +121,14 @@ final class SpeechTranscriber: ObservableObject {
         speechRecognitionTask = nil
         transcribingRecordingURL = nil
         didFinishCurrentTranscription = true
+        deleteTemporaryPreprocessedAudio()
         deleteTemporarySegments()
     }
 
     @available(iOS 26.0, *)
     private func startModernDictationRecognition(
         for recordingFile: RecordingFile,
+        recognitionAudioURL: URL,
         onResult: @escaping (String, Bool) -> Void,
         onCompletion: @escaping (SpeechTranscriberError?) -> Void
     ) {
@@ -126,7 +139,7 @@ final class SpeechTranscriber: ObservableObject {
             }
 
             do {
-                let transcriptionText = try await self.modernDictationTranscription(for: recordingFile) { text, isFinal in
+                let transcriptionText = try await self.modernDictationTranscription(for: recordingFile, recognitionAudioURL: recognitionAudioURL) { text, isFinal in
                     DispatchQueue.main.async {
                         onResult(text, isFinal)
                     }
@@ -150,7 +163,7 @@ final class SpeechTranscriber: ObservableObject {
                         return
                     }
 
-                    self.prepareRecognitionSegments(for: recordingFile.url) { result in
+                    self.prepareRecognitionSegments(for: recognitionAudioURL) { result in
                         switch result {
                         case .success(let segmentURLs):
                             self.startSpeechRecognition(
@@ -171,6 +184,7 @@ final class SpeechTranscriber: ObservableObject {
     @available(iOS 26.0, *)
     private func modernDictationTranscription(
         for recordingFile: RecordingFile,
+        recognitionAudioURL: URL,
         onResult: @escaping (String, Bool) -> Void
     ) async throws -> String {
         let transcriber = Speech.DictationTranscriber(
@@ -195,7 +209,7 @@ final class SpeechTranscriber: ObservableObject {
         let analysisContext = Speech.AnalysisContext()
         analysisContext.contextualStrings[.general] = meetingContextualStrings
 
-        let audioFile = try AVAudioFile(forReading: recordingFile.url)
+        let audioFile = try AVAudioFile(forReading: recognitionAudioURL)
         let analyzer = try await Speech.SpeechAnalyzer(
             inputAudioFile: audioFile,
             modules: modules,
@@ -245,6 +259,184 @@ final class SpeechTranscriber: ObservableObject {
         }
 
         return textParts.joined(separator: "\n")
+    }
+
+    private func preprocessedRecognitionAudioURL(for recordingURL: URL) throws -> URL {
+        deleteTemporaryPreprocessedAudio()
+
+        let inputFile = try AVAudioFile(forReading: recordingURL)
+        let inputFormat = inputFile.processingFormat
+        let outputFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: inputFormat.sampleRate,
+            channels: 1,
+            interleaved: false
+        )
+
+        guard let outputFormat else {
+            throw SpeechTranscriberError.audioPreprocessingFailed("音声形式を準備できませんでした。")
+        }
+
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingTranscriber-preprocessed-\(UUID().uuidString).caf")
+        let peakLevel = try measuredPeakLevel(
+            inputFile: inputFile,
+            inputFormat: inputFormat
+        )
+        let gain = preprocessingGain(forPeakLevel: peakLevel)
+
+        inputFile.framePosition = 0
+        try writePreprocessedAudio(
+            inputFile: inputFile,
+            inputFormat: inputFormat,
+            outputURL: outputURL,
+            outputFormat: outputFormat,
+            gain: gain
+        )
+
+        temporaryPreprocessedURL = outputURL
+        return outputURL
+    }
+
+    private func measuredPeakLevel(
+        inputFile: AVAudioFile,
+        inputFormat: AVAudioFormat
+    ) throws -> Float {
+        let frameCapacity: AVAudioFrameCount = 8_192
+        guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: frameCapacity) else {
+            throw SpeechTranscriberError.audioPreprocessingFailed("音声を読み込むバッファを準備できませんでした。")
+        }
+
+        var peakLevel: Float = 0
+        var filterState = HighPassFilterState()
+
+        while inputFile.framePosition < inputFile.length {
+            let remainingFrames = AVAudioFrameCount(inputFile.length - inputFile.framePosition)
+            let framesToRead = min(frameCapacity, remainingFrames)
+            try inputFile.read(into: inputBuffer, frameCount: framesToRead)
+
+            guard let channelData = inputBuffer.floatChannelData else {
+                throw SpeechTranscriberError.audioPreprocessingFailed("音声データを読み込めませんでした。")
+            }
+
+            for frameIndex in 0..<Int(inputBuffer.frameLength) {
+                let monoSample = monoSample(
+                    channelData: channelData,
+                    frameIndex: frameIndex,
+                    channelCount: Int(inputFormat.channelCount)
+                )
+                let filteredSample = highPassFilteredSample(
+                    monoSample,
+                    sampleRate: inputFormat.sampleRate,
+                    state: &filterState
+                )
+                peakLevel = max(peakLevel, abs(filteredSample))
+            }
+        }
+
+        return peakLevel
+    }
+
+    private func preprocessingGain(forPeakLevel peakLevel: Float) -> Float {
+        guard peakLevel > 0 else {
+            return 1
+        }
+
+        return min(8, max(1, 0.9 / peakLevel))
+    }
+
+    private func writePreprocessedAudio(
+        inputFile: AVAudioFile,
+        inputFormat: AVAudioFormat,
+        outputURL: URL,
+        outputFormat: AVAudioFormat,
+        gain: Float
+    ) throws {
+        let frameCapacity: AVAudioFrameCount = 8_192
+        guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: frameCapacity),
+              let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: frameCapacity) else {
+            throw SpeechTranscriberError.audioPreprocessingFailed("音声加工用のバッファを準備できませんでした。")
+        }
+
+        let outputFile = try AVAudioFile(forWriting: outputURL, settings: outputFormat.settings)
+        var filterState = HighPassFilterState()
+
+        while inputFile.framePosition < inputFile.length {
+            let remainingFrames = AVAudioFrameCount(inputFile.length - inputFile.framePosition)
+            let framesToRead = min(frameCapacity, remainingFrames)
+            try inputFile.read(into: inputBuffer, frameCount: framesToRead)
+            outputBuffer.frameLength = inputBuffer.frameLength
+
+            guard let inputChannelData = inputBuffer.floatChannelData,
+                  let outputChannelData = outputBuffer.floatChannelData else {
+                throw SpeechTranscriberError.audioPreprocessingFailed("音声データを加工できませんでした。")
+            }
+
+            for frameIndex in 0..<Int(inputBuffer.frameLength) {
+                let monoSample = monoSample(
+                    channelData: inputChannelData,
+                    frameIndex: frameIndex,
+                    channelCount: Int(inputFormat.channelCount)
+                )
+                var processedSample = highPassFilteredSample(
+                    monoSample,
+                    sampleRate: inputFormat.sampleRate,
+                    state: &filterState
+                )
+                processedSample = softNoiseGate(processedSample)
+                processedSample = max(-0.98, min(0.98, processedSample * gain))
+                outputChannelData[0][frameIndex] = processedSample
+            }
+
+            try outputFile.write(from: outputBuffer)
+        }
+    }
+
+    private func monoSample(
+        channelData: UnsafePointer<UnsafeMutablePointer<Float>>,
+        frameIndex: Int,
+        channelCount: Int
+    ) -> Float {
+        guard channelCount > 1 else {
+            return channelData[0][frameIndex]
+        }
+
+        var sum: Float = 0
+        for channelIndex in 0..<channelCount {
+            sum += channelData[channelIndex][frameIndex]
+        }
+
+        return sum / Float(channelCount)
+    }
+
+    private func highPassFilteredSample(
+        _ sample: Float,
+        sampleRate: Double,
+        state: inout HighPassFilterState
+    ) -> Float {
+        let cutoffFrequency = 120.0
+        let dt = 1.0 / sampleRate
+        let rc = 1.0 / (2.0 * Double.pi * cutoffFrequency)
+        let alpha = Float(rc / (rc + dt))
+        let filteredSample = alpha * (state.previousOutput + sample - state.previousInput)
+
+        state.previousInput = sample
+        state.previousOutput = filteredSample
+        return filteredSample
+    }
+
+    private func softNoiseGate(_ sample: Float) -> Float {
+        let absoluteSample = abs(sample)
+
+        if absoluteSample < 0.003 {
+            return sample * 0.25
+        }
+
+        if absoluteSample < 0.008 {
+            return sample * 0.65
+        }
+
+        return sample
     }
 
     private func prepareRecognitionSegments(
@@ -500,6 +692,7 @@ final class SpeechTranscriber: ObservableObject {
         audioExportSession = nil
         speechRecognitionTask = nil
         transcribingRecordingURL = nil
+        deleteTemporaryPreprocessedAudio()
         deleteTemporarySegments()
         if let error {
             debugPrint("Finished transcription with error: \(error.logDescription)")
@@ -518,6 +711,23 @@ final class SpeechTranscriber: ObservableObject {
             temporarySegmentURLs = []
         }
     }
+
+    private func deleteTemporaryPreprocessedAudio() {
+        guard let temporaryPreprocessedURL else {
+            return
+        }
+
+        if temporaryPreprocessedURL.path.hasPrefix(FileManager.default.temporaryDirectory.path) {
+            try? FileManager.default.removeItem(at: temporaryPreprocessedURL)
+        }
+
+        self.temporaryPreprocessedURL = nil
+    }
+}
+
+private struct HighPassFilterState {
+    var previousInput: Float = 0
+    var previousOutput: Float = 0
 }
 
 enum SpeechTranscriberError: Error {
@@ -530,6 +740,7 @@ enum SpeechTranscriberError: Error {
     case speechAuthorizationFailed
     case japaneseRecognizerUnavailable
     case recognizerUnavailable
+    case audioPreprocessingFailed(String)
     case audioSegmentPreparationFailed(String)
     case noRecognizableSpeech
     case recognitionFailed(String)
@@ -554,6 +765,8 @@ enum SpeechTranscriberError: Error {
             return "Japanese speech recognizer is unavailable."
         case .recognizerUnavailable:
             return "Speech recognizer is currently unavailable."
+        case .audioPreprocessingFailed(let detail):
+            return "Audio preprocessing failed: \(detail)"
         case .audioSegmentPreparationFailed(let detail):
             return "Audio could not be split for recognition: \(detail)"
         case .noRecognizableSpeech:

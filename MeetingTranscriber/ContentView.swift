@@ -904,6 +904,8 @@ struct ContentView: View {
             return "日本語の音声認識を使用できません。端末の言語設定や音声認識の利用状況を確認してください。"
         case .recognizerUnavailable:
             return "現在、音声認識を使用できません。端末の状態を確認して、時間をおいて再試行してください。"
+        case .audioPreprocessingFailed(let detail):
+            return "文字起こし用の音声調整に失敗しました。録音ファイルを再生できるか確認して、もう一度お試しください。詳細: \(detail)"
         case .audioSegmentPreparationFailed(let detail):
             return "長時間の音声を文字起こし用に分割できませんでした。録音ファイルを再生できるか確認して、もう一度お試しください。詳細: \(detail)"
         case .noRecognizableSpeech:
